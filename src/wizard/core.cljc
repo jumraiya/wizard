@@ -9,25 +9,35 @@
 
 (defonce ^:private ccircuits (atom {}))
 
-#trace
- (defn- process-tx [_id tx-data]
-   (doseq [[id {:keys [circuit view]}] @circuits]
-     (let [circuit (c.impl/step circuit tx-data)
+
+(defn- process-tx [_id tx-data]
+  (reduce
+   (fn [tx [id {:keys [circuit view]}]]
+     (let [circuit (if (= id :wizard.examples.adventure/accessible-objects)
+                     (c.impl/step circuit tx-data
+                                        ;:print? true
+                                  )
+                     (c.impl/step circuit tx-data))
            output (-> circuit c.impl/get-output-stream last)
            view (reduce
-                   (fn [view [row add?]]
-                                        ;(prn row)
-                     (if add?
-                       (conj view row)
-                       (disj view row)))
-                   view
-                   output)]
+                 (fn [view [row add?]]
+                   (if add?
+                     (conj view row)
+                     (disj view row)))
+                 view
+                 output)]
        (swap! circuits update id
               (fn [{:keys [diffs] :as data}]
                 (assoc data :view view :diffs (conj diffs output) :circuit circuit)))
-       (when-not (empty? output)
-         (doseq [sub (get @subscriptions id)]
-           (sub output view))))))
+       (into
+        tx
+        (when-not (empty? output)
+          (reduce
+           #(into %1 (%2 output view))
+           []
+           (get @subscriptions id))))))
+   []
+   @circuits))
 
 (defn add-view [conn id query
                 & {:keys [args rules] :or {args {} rules []}}]
@@ -35,13 +45,14 @@
     (let [msg (str "First argument should be a datascript connection, got " conn)]
       (throw #?(:clj (Exception. msg)
                 :cljs (js/Error. msg)))))
-  (ds/listen! conn ::views
+  #_(ds/listen! conn ::views
               (fn [{:keys [tx-data]}]
-                                        ;(prn tx-data)
                 (process-tx id tx-data)))
   (let [tx-data (into (ds/datoms @conn :eavt)
                       (mapv #(vector :c/input (key %) (val %) -1 true) args))
         ccircuit (c/build-circuit query rules)
+        ;; _ (when (= id :wizard.examples.adventure/accessible-objects)
+        ;;     (caudex.utils/prn-graph ccircuit))
         circuit (-> ccircuit
                     (c.impl/reify-circuit)
                     (c.impl/step tx-data))
@@ -53,6 +64,14 @@
     (swap! ccircuits assoc id ccircuit)
     (swap! circuits assoc id {:circuit circuit :view view :diffs []})
     (swap! subscriptions assoc id [])))
+
+(defn transact [conn tx-data]
+  (let [{:keys [tx-data] :as ret} (ds/transact! conn tx-data)
+        new-tx (process-tx ::views tx-data)]
+    (if (seq new-tx)
+      (transact conn new-tx)
+      ret)))
+
 
 (defn get-view [id]
   (get-in @circuits [id :view]))
