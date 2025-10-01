@@ -1,8 +1,9 @@
-{:paths ["src" "test" "../caudex/src"]
+{:paths ["src" "test" "examples" "../caudex/src"]
  :deps {datascript/datascript {:mvn/version "1.7.4"}
         com.github.flow-storm/flow-storm-dbg {:mvn/version "4.0.2"}
         ubergraph/ubergraph {:mvn/version "0.9.0"}
         thheller/shadow-cljs {:mvn/version "2.28.23"}
+        com.datomic/peer     {:mvn/version "1.0.7394"}
         com.phronemophobic/clj-graphviz {:mvn/version "0.6.4"}
         com.phronemophobic.cljonda/graphviz-darwin-aarch64 {:mvn/version "2.50.0-0.9.5"}
         nubank/matcher-combinators {:mvn/version "3.9.1"}

@@ -19,6 +19,16 @@
                                   )
                      (c.impl/step circuit tx-data))
            output (-> circuit c.impl/get-output-stream last)
+           asserts (into []
+                         (comp
+                          (filter #(true? (val %)))
+                          (map key))
+                         output)
+           retracts (into []
+                         (comp
+                          (filter #(false? (val %)))
+                          (map key))
+                         output)
            view (reduce
                  (fn [view [row add?]]
                    (if add?
@@ -33,7 +43,7 @@
         tx
         (when-not (empty? output)
           (reduce
-           #(into %1 (%2 output view))
+           #(into %1 (%2 asserts retracts view))
            []
            (get @subscriptions id))))))
    []
@@ -98,6 +108,7 @@
    [[:db/add 54 :attr-1 65]
     [:db/add 65 :attr-2 "asd"]])
 
+  (-> @circuits :wizard.examples.adventure/inspect-action :circuit caudex.utils/circuit->map)
   (ds/transact!
    conn
    [[:db/add 65 :attr-2 "cdv"]
