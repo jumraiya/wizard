@@ -6,5 +6,14 @@
         com.datomic/peer     {:mvn/version "1.0.7394"}
         com.phronemophobic/clj-graphviz {:mvn/version "0.6.4"}
         com.phronemophobic.cljonda/graphviz-darwin-aarch64 {:mvn/version "2.50.0-0.9.5"}
+        persistent-sorted-set/persistent-sorted-set {:mvn/version "0.3.0"}
         nubank/matcher-combinators {:mvn/version "3.9.1"}
-        org.clojure/clojurescript {:mvn/version "1.11.54"}}}
+        org.clojure/clojurescript {:mvn/version "1.11.54"}}
+ :aliases {
+    ;; nREPL server for AI to connect to
+    ;; Include all paths you want available for development
+    :nrepl {:extra-paths ["test"]
+            :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
+			;; this allows nrepl to interrupt runaway repl evals
+            :jvm-opts ["-Djdk.attach.allowAttachSelf"]
+            :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}}}

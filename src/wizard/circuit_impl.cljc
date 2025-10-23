@@ -62,12 +62,24 @@
           (-> integrated-op dbsp/-get-output-type dbsp/-to-vector))))
 ;#trace
 (defn- init-delay-state-fn [op circuit]
-  (if-let [join-output (first
-                        (into []
-                              (comp
-                               (map :dest)
-                               (filter #(= :join (dbsp/-get-op-type %))))
-                              (g/out-edges circuit op)))]
+  (if-let [join-output (or
+                        (first
+                         (into []
+                               (comp
+                                (map :dest)
+                                (filter #(= :join (dbsp/-get-op-type %))))
+                               (g/out-edges circuit op)))
+                        (first
+                         (into []
+                               (comp
+                                (map :dest)
+                                (filter #(= :delay (dbsp/-get-op-type %)))
+                                cat
+                                (map #(g/out-edges circuit %))
+                                cat
+                                (map :dest)
+                                (filter #(= :join (dbsp/-get-op-type %))))
+                               (g/out-edges circuit op))))]
     (let [other-input (first (filter #(not= (:src %) op)
                                      (g/in-edges circuit join-output)))]
       (z/mk-zset-init-fn-for-join
@@ -88,19 +100,12 @@
         new-state))))
 
 ;#trace
- (defn- handle-delay-op-fn [op circuit input-key]
-  (let [init-fn (init-delay-state-fn op circuit)]
-    (fn [inputs delay-states]
-      (let [old-state (get @delay-states (dbsp/-get-id op))]
-        (swap! delay-states update (dbsp/-get-id op)
-               #(if %
-                  (into (empty %) (get inputs input-key))
-                  (into (init-fn) (get inputs input-key))))
-        #_(swap! delay-states update (dbsp/-get-id op)
-                 #(if %
-                    (into % (get inputs input-key))
-                    (into (init-fn) (get inputs input-key))))
-        old-state))))
+ (defn- handle-delay-op-fn [op input-key]
+  (fn [inputs delay-states]
+    (let [old-state (get @delay-states (dbsp/-get-id op))]
+      (swap! delay-states assoc (dbsp/-get-id op)
+             (get inputs input-key))
+      old-state)))
 
 #trace
  (defn- handle-join-op [integrated-zset delta-zset lookup-key-fn flipped?]
@@ -149,11 +154,14 @@
                 (fn [inputs _]
                   (filter-fn (get inputs (first input-keys)))))
       :map (fn [inputs _]
-             (mapv #(map-zset-row op %) (get inputs (first input-keys))))
-      :neg (fn [inputs _]
-             (mapv #(conj (vec (butlast %)) (not (last %)))
+             (into (z/mk-op-zset op)
+                   (map #(map-zset-row op %))
                    (get inputs (first input-keys))))
-      :delay (handle-delay-op-fn op circuit (first input-keys))
+      :neg (fn [inputs _]
+             (into (z/mk-op-zset op)
+                   (map #(conj (vec (butlast %)) (not (last %))))
+                   (get inputs (first input-keys))))
+      :delay (handle-delay-op-fn op (first input-keys))
       :integrate (handle-integrate-op-fn op circuit (first input-keys))
       :join (let [[lhs rhs] input-keys
                   conds (:join-conds op)
@@ -249,8 +257,7 @@
 
 ;#trace
  (defn reify-circuit [circuit & [debug?]]
-  (let [;strata (utils/topsort-circuit circuit :stratify? true)
-        strata (mapv vector (utils/topsort-circuit circuit))
+  (let [strata (utils/topsort-circuit circuit :stratify? true)
         ;; strata-deps (reduce
         ;;              (fn [deps ops]
         ;;                (conj deps
@@ -261,22 +268,18 @@
                 #(conj %1 (mapv (fn [op] [(dbsp/-get-id op) (build-fn circuit op)]) %2))
                 []
                 strata)
-         ;; _ (utils/prn-graph circuit)
         delay-states (atom {})
         debug-data (when debug?
                      (atom (init-debug-data circuit)))]
     (fn [tx-data]
-      ;(prn "-----------------------------------------------------")
       (loop [outputs {'tx-data tx-data} strata op-fns
                                         ;deps strata-deps
              ]
         (if (seq strata)
           (let [res (process-strata (first strata) outputs delay-states)]
-            ;(prn (select-keys res (mapv first (first strata))))
             (recur (into outputs res)
                    (rest strata)))
           (do
-            ;(prn "-----------------------------------------------------")
             (when debug?
               (dump-debug-data (update-debug-data debug-data outputs)))
             (get outputs (-> op-fns last ffirst))))))))
