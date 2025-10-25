@@ -9,7 +9,7 @@
    (let [q '[:find ?a ?b
              :where
              [?a :attr-1 ?b]]
-         circuit (impl/reify-circuit (c/build-circuit q) true)
+         circuit (impl/reify-circuit (c/build-circuit q))
          tx-data [[1 :attr-1 2 123 true]
                   [2 :attr-2 12 123 true]]
          output (circuit tx-data)]
@@ -138,6 +138,7 @@
                       [(ground "no-description") ?det]))]
         ccircuit (c/build-circuit q)
         circuit (impl/reify-circuit ccircuit true)
+        ;; circuit (impl/reify-circuit user/circuit true)
         _ (circuit
            [[:obj :object/description "desc" 123 true]
             [:obj :object/detailed-description "detailed desc" 123 true]
@@ -159,6 +160,7 @@
         output-2 (circuit
                   [[:action-3 :action/type :inspect 124 true]
                    [:action-3 :action/arg "desc" 124 true]])]
+    (prn output output-2)
     (is (match?
          #{[:action-2 "desc" :obj "detailed desc" true]}
          output))
@@ -202,6 +204,7 @@
         output-2 (circuit
                   [[:player :object/loc :loc 123 true]
                    [:player :object/loc :loc-2 123 false]])]
+    (prn output output-2)
     (is (match? #{[:obj :not-accessible true]} output))
     (is (match? #{[:obj :accessible true] [:obj :not-accessible false]} output-2))))
 

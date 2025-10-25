@@ -1,6 +1,7 @@
 (ns wizard.core
   (:require [caudex.circuit :as c]
-            [caudex.impl.circuit :as c.impl]
+            [wizard.circuit-impl :as c.impl]
+                                        ;[caudex.impl.circuit :as c.impl]
             [datascript.core :as ds]))
 
 (defonce ^:private circuits (atom {}))
@@ -13,29 +14,37 @@
 (defn- process-tx [_id tx-data]
   (reduce
    (fn [tx [id {:keys [circuit view]}]]
-     (let [circuit (if (= id :wizard.examples.adventure/accessible-objects)
-                     (c.impl/step circuit tx-data
-                                        ;:print? true
-                                  )
-                     (c.impl/step circuit tx-data))
-           output (-> circuit c.impl/get-output-stream last)
+     (let [output (circuit tx-data)
            asserts (into []
                          (comp
-                          (filter #(true? (val %)))
-                          (map key))
+                          (filter #(true? (last %)))
+                          (map butlast)
+                          (map vec)
+                          #_(filter #(true? (val %)))
+                          #_(map key))
                          output)
            retracts (into []
-                         (comp
-                          (filter #(false? (val %)))
-                          (map key))
-                         output)
+                          (comp
+                           (filter #(false? (last %)))
+                           (map butlast)
+                           (map vec)
+                           #_(filter #(false? (val %)))
+                           #_(map key))
+                          output)
            view (reduce
-                 (fn [view [row add?]]
-                   (if add?
-                     (conj view row)
-                     (disj view row)))
-                 view
-                 output)]
+                 conj
+                 (reduce
+                  disj
+                  view
+                  retracts)
+                 asserts)
+           #_(reduce
+              (fn [view [row add?]]
+                (if add?
+                  (conj view row)
+                  (disj view row)))
+              view
+              output)]
        (swap! circuits update id
               (fn [{:keys [diffs] :as data}]
                 (assoc data :view view :diffs (conj diffs output) :circuit circuit)))
@@ -61,16 +70,19 @@
   (let [tx-data (into (ds/datoms @conn :eavt)
                       (mapv #(vector :c/input (key %) (val %) -1 true) args))
         ccircuit (c/build-circuit query rules)
-        ;; _ (when (= id :wizard.examples.adventure/accessible-objects)
-        ;;     (caudex.utils/prn-graph ccircuit))
-        circuit (-> ccircuit
-                    (c.impl/reify-circuit)
-                    (c.impl/step tx-data))
+        circuit (c.impl/reify-circuit ccircuit)
+        #_(-> ccircuit
+              (c.impl/reify-circuit)
+              (c.impl/step tx-data))
         view (into #{}
                    (comp
-                    (filter #(true? (val %)))
-                    (map key))
-                   (-> circuit c.impl/get-output-stream last))]
+                    (filter #(true? (last %)))
+                    (map butlast)
+                    (map vec)
+                    #_(filter #(true? (val %)))
+                    #_(map key))
+                   (circuit tx-data)
+                   #_(-> circuit c.impl/get-output-stream last))]
     (swap! ccircuits assoc id ccircuit)
     (swap! circuits assoc id {:circuit circuit :view view :diffs []})
     (swap! subscriptions assoc id [])))

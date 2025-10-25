@@ -21,7 +21,7 @@
                                tx-data)))
 
 
-                                        ;#trace
+                                        ;;#trace
 (defn- filter-zset [op]
   (fn [zset]
     (into (z/mk-op-zset op)
@@ -35,7 +35,7 @@
                     (conj (mapv #(nth row (:idx %)) (:projections op)) (last row))
                     row))))
           zset)))
-;#trace
+;;#trace
  (defn- map-zset-row [op row]
    (let [args (into []
                     (map #(if (dbsp/is-idx? %)
@@ -48,19 +48,7 @@
        (conj (vec (butlast row)) res (last row))
       ;; If no indices were used, simply return the result
        [res true])))
-;#trace
-(defn- get-join-indices [integrated-op other-op]
-  (let [other-input-vars (-> other-op dbsp/-get-output-type dbsp/-to-vector set)]
-    (into []
-          (comp
-           (map-indexed vector)
-           (map (fn [[idx var]]
-                  (when (and (symbol? var)
-                             (contains? other-input-vars var))
-                    idx)))
-           (filter some?))
-          (-> integrated-op dbsp/-get-output-type dbsp/-to-vector))))
-;#trace
+
 (defn- init-delay-state-fn [op circuit]
   (if-let [join-output (or
                         (first
@@ -99,7 +87,7 @@
                #(assoc % (dbsp/-get-id op) new-state))
         new-state))))
 
-;#trace
+;;#trace
  (defn- handle-delay-op-fn [op input-key]
   (fn [inputs delay-states]
     (let [old-state (get @delay-states (dbsp/-get-id op))]
@@ -107,7 +95,7 @@
              (get inputs input-key))
       old-state)))
 
-#trace
+;#trace
  (defn- handle-join-op [integrated-zset delta-zset lookup-key-fn flipped?]
    (reduce
     (fn [output delta-row]
@@ -139,7 +127,7 @@
    {}
    strata))
 
-;#trace
+;;#trace
  (defn- build-fn [circuit op]
   (let [input-ops (into []
                         (map :src)
@@ -227,7 +215,7 @@
                (g/edges circuit)))]
     (assoc data :nodes nodes :edges edges)))
 
-;#trace
+;;#trace
 (defn- update-debug-data [data outputs]
   (run!
    (fn [[op-id op-output]]
@@ -241,23 +229,23 @@
    outputs)
   (swap! data update :t inc))
 
-;#trace
+;;#trace
 (defn- dump-debug-data [data]
   (reset! debug-data data)
   #?(:clj (spit "circuit_data.json" (json/write-str data))
-     :cljs
-     (let [json-str (js/json.stringify (clj->js data) nil 2)
-           blob (js/blob. #js [json-str] #js {:type "application/json"})
-           url (js/url.createobjecturl blob)
-           link (.createelement js/document "a")]
-       (set! (.-href link) url)
-       (set! (.-download link) "circuit_data.json")
-       (.click link)
-       (js/url.revokeobjecturl url))))
+     :cljs (let [json-str (.stringify js/JSON (clj->js data) nil 2)
+                 blob (js/Blob. #js [json-str] #js {:type "application/json"})
+                 url (.createObjectURL js/URL blob)
+                 link (.createElement js/document "a")]
+             (set! (.-href link) url)
+             (set! (.-download link) "circuit_data.json")
+             (.click link)
+             (.revokeObjectURL js/URL url))))
 
-;#trace
+;;#trace
  (defn reify-circuit [circuit & [debug?]]
-  (let [strata (utils/topsort-circuit circuit :stratify? true)
+  (let [strata (utils/stratified-topsort circuit)
+        ;strata (mapv vector (utils/topsort-circuit circuit))
         ;; strata-deps (reduce
         ;;              (fn [deps ops]
         ;;                (conj deps

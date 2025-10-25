@@ -35,5 +35,5 @@
                               [21 "efw" :asd true]
                               [54 "asd" :ded false]])
         lookup-key [:* "asd" :* :*]]
-    (is #{[23 "asd" :ed true] [54 "asd" :ded false]}
-        (sset/slice zset lookup-key lookup-key))))
+    (is (= #{[23 "asd" :ed true] [54 "asd" :ded false]}
+           (sset/slice zset lookup-key lookup-key)))))

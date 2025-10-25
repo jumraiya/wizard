@@ -16,7 +16,7 @@
      :location/description "room with red walls, there is a table in the center of the room. A window with iron bars looks to east and has sunlight coming through. It reflects brightly on the door across the room on the western wall, which seems to have a handle made from an exotic metal. There is another door to the south."
      :db/ident :red-room}
     {:db/id -102
-     :location/description "room with white walls, there are doors to the west and south. You can see daylight coming underneath the southern door."
+     :location/description "room with white walls, there are doors to the east and south. You can see daylight coming underneath the southern door."
      :db/ident :white-room}
     {:db/id -103
      :location/description "room with blue walls. There is a desk with some papers on it on the eastern wall."
@@ -58,10 +58,6 @@
      :object/description "handle"
      :object/detailed-description "It's ornate handle, it seems to be made of a light colored alloy which looks somewhat brittle."
      :object/location :red-room}
-    {:db/id -207
-     :object/description "door handle"
-     :object/detailed-description "It's ornate handle, it seems to be made of a light colored alloy which looks somewhat brittle."
-     :object/location :red-room}
     {:db/id -208
      :object/description "bowl"
      :object/detailed-description "It's made of the finest glass. There is no sign of any impurity."
@@ -92,7 +88,7 @@
      :exit/location-1-wall :south
      :exit/location-2 :outside
      :exit/location-2-wall :north
-     :exit/locked? true}]})
+     :exit/locked? false}]})
 
 (def schema
   {;; :location/description string
@@ -260,9 +256,9 @@
              [?p :object/description "player"]
              [?p :object/location ?loc]
              [?loc :location/description ?desc]]
-    :handler (fn [add _ _]
+    :handler (fn [add _ret _view]
                (when-let [[desc] (first add)]
-                 (prn (str "You are in a " desc))))}
+                 (println (str "You are in a " desc))))}
    ::move-action
    {:query '[:find ?a ?dest ?locked
              :in $ %
@@ -296,7 +292,7 @@
     :handler (fn [adds _ _]
                (when-let [[action-id new-loc locked?] (first adds)]
                  (let [tx (cond
-                            (true? locked?) (do (prn "The door is locked") [])
+                            (true? locked?) (do (println "The door is locked") [])
                             (not= :not-found new-loc)
                             [[:db/add :player :object/location new-loc]]
                             (= :not-found new-loc) (do (println "There is no door in that direction") [])
@@ -315,7 +311,7 @@
     :handler (fn [adds _ _]
                (when-let [[action-id object-id action-arg desc] (first adds)]
                  (if (= :object-not-found object-id)
-                   (prn (str "no " action-arg " found"))
+                   (println (str "no " action-arg " found"))
                    (println desc))
                  [[:db/add action-id :action/inspect-processed? true]]))}
 
@@ -396,6 +392,37 @@
                     (do
                       (println (str "set combination to " code))
                       [:db/add object-id :object/combination code])))))}
+   ::accessible-objects
+   {:query '[:find ?desc ?in-inventory
+             :in $ %
+             :where
+             [?o :object/description ?desc]
+             [?o :object/detailed-description ?det]
+             [?player :object/description "player"]
+             [?player :object/location ?player-loc]
+             (not-join [?o]
+                       [?o :object/description "player"])
+             (or-join [?player-loc ?player ?o ?in-inventory]
+                      (and [?o :object/location ?player]
+                           [(ground true) ?in-inventory])
+                      (and
+                       [?o :object/location ?player-loc]
+                       [(ground false) ?in-inventory]))]
+    :handler (fn [_ _ _])}
+
+   ::accessible-exits
+   {:query '[:find ?wall
+             :in $ %
+             :where
+             (get-player-loc ?loc)
+             (or-join [?loc ?wall]
+                      (and
+                       [?e :exit/location-1 ?loc]
+                       [?e :exit/location-1-wall ?wall])
+                      (and
+                       [?e :exit/location-2 ?loc]
+                       [?e :exit/location-2-wall ?wall]))]
+    :handler (fn [_ _ _])}
 
    ::put-action
    {:query '[:find ?a ?desc ?on-desc ?o ?on-object
@@ -448,7 +475,7 @@
                             :action/type %1
                             :action/arg %2}])]
     (case action
-      "help" (prn "You can use the following commands:\nmove [north|south|west|east]\ninspect [object]\npickup [object]")
+      "help" (println "You can use the following commands:\nmove [north|south|west|east]\ninspect [object]\npickup [object]")
       "move" (transact-action :move object)
 
       "inspect" (transact-action :inspect object)
@@ -461,6 +488,29 @@
                [{:db/id -1
                  :put-action/object object
                  :put-action/on-object on-object}]))
+      "look" (let [loc-desc (w/get-view ::player-location)
+                   objects (w/get-view ::accessible-objects)
+                   exits (mapv (comp name first) (w/get-view ::accessible-exits))]
+               (println (str "You are in a " (ffirst loc-desc)))
+               (println (str "You see a "
+                             (clojure.string/join
+                              ","
+                              (into []
+                                    (comp
+                                     (filter #(false? (second %)))
+                                     (map first))
+                                    objects))))
+               (when-let [objs (seq
+                                (into []
+                                      (comp
+                                       (filter #(true? (second %)))
+                                       (map first))
+                                      objects))]
+                 (println (str "You have a "
+                               (clojure.string/join
+                                ", "
+                                objs))))
+               (println (str "There are doors to the ") (clojure.string/join ", " exits)))
 
       "set" (if (= object "combination")
               (let [[code] args]
@@ -476,6 +526,14 @@
     (w/add+subscribe-to-view @game-conn id handler query :rules rules))
   (w/transact @game-conn [[:db/add :player :object/location :green-room]])
   nil)
+
+#?(:cljs
+   (do
+     (defn ^:export start-game-js []
+       (start-game))
+     
+     (defn ^:export do-action-js [action-str]
+       (do-action action-str))))
 
 (comment
   (w/reset-all)
@@ -494,6 +552,7 @@
 
   (do-action "open safe")
   (do-action "pickup bowl")
+  (do-action "look")
   (do-action "put bowl on table")
   (do-action "inspect bowl")
   (do-action "set combination 13311")
