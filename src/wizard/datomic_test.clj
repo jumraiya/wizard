@@ -1,6 +1,8 @@
 (ns wizard.datomic-test
   (:require
    [wizard.examples.adventure :as adv]
+   [caudex.circuit :as c]
+   [wizard.circuit-impl :as impl]
    [datomic.api :as d]))
 
 (def db-uri "datomic:mem://hello")
@@ -31,6 +33,35 @@
                    {:movie/title "Repo Man"
                     :movie/genre "punk dystopia"
                     :movie/release-year 1984}])
+
+
+(comment
+  (def uri "datomic:dev://localhost:4334/mbrainz-1968-1973")
+  (def conn (d/connect uri))
+
+  (def db (d/db conn))
+
+  (def test-query
+    '[:find ?id ?type ?gender
+      ;; :in $ ?name
+      :where
+      [?e :artist/name ?name]
+      ])
+
+  (d/q test-query db)
+
+  (def ccircuit (c/build-circuit test-query))
+  (def circuit (impl/reify-circuit ccircuit
+                                   true
+                                   ))
+
+  (prn (circuit
+        (mapv
+         (fn [datom]
+          [(:e datom) (d/ident db (:a datom)) (:v datom) (:tx datom) (:added datom)])
+         (d/datoms db :eavt))))
+  (d/q '[:find ?r ?s :where [?r :script ?s]] db))
+
 
 (comment
   (d/create-database db-uri)

@@ -76,7 +76,6 @@
     #(z/mk-op-zset op)))
 
 
-#trace
 (defn- handle-integrate-op-fn [op circuit input-key]
   (let [init-fn (init-delay-state-fn op circuit)]
     (fn integrate [inputs delay-states]

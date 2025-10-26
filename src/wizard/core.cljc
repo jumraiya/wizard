@@ -19,17 +19,13 @@
                          (comp
                           (filter #(true? (last %)))
                           (map butlast)
-                          (map vec)
-                          #_(filter #(true? (val %)))
-                          #_(map key))
+                          (map vec))
                          output)
            retracts (into []
                           (comp
                            (filter #(false? (last %)))
                            (map butlast)
-                           (map vec)
-                           #_(filter #(false? (val %)))
-                           #_(map key))
+                           (map vec))
                           output)
            view (reduce
                  conj
@@ -37,14 +33,7 @@
                   disj
                   view
                   retracts)
-                 asserts)
-           #_(reduce
-              (fn [view [row add?]]
-                (if add?
-                  (conj view row)
-                  (disj view row)))
-              view
-              output)]
+                 asserts)]
        (swap! circuits update id
               (fn [{:keys [diffs] :as data}]
                 (assoc data :view view :diffs (conj diffs output) :circuit circuit)))
@@ -64,25 +53,16 @@
     (let [msg (str "First argument should be a datascript connection, got " conn)]
       (throw #?(:clj (Exception. msg)
                 :cljs (js/Error. msg)))))
-  #_(ds/listen! conn ::views
-              (fn [{:keys [tx-data]}]
-                (process-tx id tx-data)))
   (let [tx-data (into (ds/datoms @conn :eavt)
-                      (mapv #(vector :c/input (key %) (val %) -1 true) args))
+                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
         ccircuit (c/build-circuit query rules)
         circuit (c.impl/reify-circuit ccircuit)
-        #_(-> ccircuit
-              (c.impl/reify-circuit)
-              (c.impl/step tx-data))
         view (into #{}
                    (comp
                     (filter #(true? (last %)))
                     (map butlast)
-                    (map vec)
-                    #_(filter #(true? (val %)))
-                    #_(map key))
-                   (circuit tx-data)
-                   #_(-> circuit c.impl/get-output-stream last))]
+                    (map vec))
+                   (circuit tx-data))]
     (swap! ccircuits assoc id ccircuit)
     (swap! circuits assoc id {:circuit circuit :view view :diffs []})
     (swap! subscriptions assoc id [])))
