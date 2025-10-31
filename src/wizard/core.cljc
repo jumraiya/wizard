@@ -36,7 +36,7 @@
                  asserts)]
        (swap! circuits update id
               (fn [{:keys [diffs] :as data}]
-                (assoc data :view view :diffs (conj diffs output) :circuit circuit)))
+                (assoc data :view view :diffs (conj diffs output))))
        (into
         tx
         (when-not (empty? output)
