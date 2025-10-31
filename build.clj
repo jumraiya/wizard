@@ -2,7 +2,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'net.clojars.jumraiya/wizard)
-(def version "0.1.1")
+(def version "0.1.2")
 (def class-dir "target/classes")
 (def jar-file (format "target/%s-%s.jar" (name lib) version))
 
@@ -13,17 +13,23 @@
   (clean nil)
   (b/copy-dir {:src-dirs ["src"]
                :target-dir class-dir})
-  (let [basis (b/create-basis {:project "deps.edn"})]
+  (let [basis (b/create-basis {:project "deps.edn" :aliases []})]
     (b/write-pom {:class-dir class-dir
                   :lib lib
                   :version version
                   :basis basis
-                  :src-dirs ["src"]})
+                  :src-dirs ["src"]
+                  :scm {:url "https://github.com/jumraiya/wizard"
+                        :connection "scm:git:git://github.com/jumraiya/wizard.git"
+                        :developerConnection "scm:git:ssh://git@github.com/jumraiya/wizard.git"}})
     (b/jar {:class-dir class-dir
             :jar-file jar-file
             :basis basis
             :lib lib
-            :version version})))
+            :version version})
+    ;; Copy pom.xml to root for convenience
+    (b/copy-file {:src (str class-dir "/META-INF/maven/" (namespace lib) "/" (name lib) "/pom.xml")
+                  :target "pom.xml"})))
 
 (defn uberjar [_]
   (clean nil)
