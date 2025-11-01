@@ -18,7 +18,11 @@
      [:url "https://opensource.org/licenses/MIT"]]]
    [:developers
     [:developer
-     [:name "Jaideep Umraiya"]]]])
+     [:name "Jaideep Umraiya"]]]
+   [:distributionManagement
+    [:repository
+     [:id "clojars"]
+     [:url "https://repo.clojars.org/"]]]])
 
 (defn jar [_]
   (clean nil)
@@ -30,26 +34,10 @@
               :version version
               :basis basis
               :src-dirs ["src"]
-              :repositories [["clojars" {:url "https://repo.clojars.org/"}]]
               :pom-data (pom-template)
               :jar-file  (format "target/%s-%s.jar" lib version)}]
     (b/write-pom (assoc opts :src-pom :none))
     (b/jar opts)
-    ;; Add distributionManagement to pom.xml if not already present
-    (let [pom-path (str class-dir "/META-INF/maven/" (namespace lib) "/" (name lib) "/pom.xml")
-          pom-content (slurp pom-path)]
-      (when-not (clojure.string/includes? pom-content "<distributionManagement>")
-        (let [updated-pom (clojure.string/replace
-                           pom-content
-                           #"</scm>"
-                           (str "</scm>\n  <distributionManagement>\n"
-                                "    <repository>\n"
-                                "      <id>clojars</id>\n"
-                                "      <name>Clojars repository</name>\n"
-                                "      <url>https://clojars.org/repo</url>\n"
-                                "    </repository>\n"
-                                "  </distributionManagement>"))]
-          (spit pom-path updated-pom))))
     (b/copy-file {:src (str class-dir "/META-INF/maven/" (namespace lib) "/" (name lib) "/pom.xml")
                   :target "pom.xml"})))
 
