@@ -9,25 +9,47 @@
 (defn clean [_]
   (b/delete {:path "target"}))
 
+(defn- pom-template []
+  [[:description "A Clojure(script) state management library built using datascript"]
+   [:url "https://github.com/jumraiya/wizard"]
+   [:licenses
+    [:license
+     [:name "MIT License"]
+     [:url "https://opensource.org/licenses/MIT"]]]
+   [:developers
+    [:developer
+     [:name "Jaideep Umraiya"]]]])
+
 (defn jar [_]
   (clean nil)
   (b/copy-dir {:src-dirs ["src"]
                :target-dir class-dir})
-  (let [basis (b/create-basis {:project "deps.edn" :aliases []})]
-    (b/write-pom {:class-dir class-dir
-                  :lib lib
-                  :version version
-                  :basis basis
-                  :src-dirs ["src"]
-                  :scm {:url "https://github.com/jumraiya/wizard"
-                        :connection "scm:git:git://github.com/jumraiya/wizard.git"
-                        :developerConnection "scm:git:ssh://git@github.com/jumraiya/wizard.git"}})
-    (b/jar {:class-dir class-dir
-            :jar-file jar-file
-            :basis basis
-            :lib lib
-            :version version})
-    ;; Copy pom.xml to root for convenience
+  (let [basis (b/create-basis {:project "deps.edn" :aliases []})
+        opts {:class-dir class-dir
+              :lib lib
+              :version version
+              :basis basis
+              :src-dirs ["src"]
+              :repositories [["clojars" {:url "https://repo.clojars.org/"}]]
+              :pom-data (pom-template)
+              :jar-file  (format "target/%s-%s.jar" lib version)}]
+    (b/write-pom (assoc opts :src-pom :none))
+    (b/jar opts)
+    ;; Add distributionManagement to pom.xml if not already present
+    (let [pom-path (str class-dir "/META-INF/maven/" (namespace lib) "/" (name lib) "/pom.xml")
+          pom-content (slurp pom-path)]
+      (when-not (clojure.string/includes? pom-content "<distributionManagement>")
+        (let [updated-pom (clojure.string/replace
+                           pom-content
+                           #"</scm>"
+                           (str "</scm>\n  <distributionManagement>\n"
+                                "    <repository>\n"
+                                "      <id>clojars</id>\n"
+                                "      <name>Clojars repository</name>\n"
+                                "      <url>https://clojars.org/repo</url>\n"
+                                "    </repository>\n"
+                                "  </distributionManagement>"))]
+          (spit pom-path updated-pom))))
     (b/copy-file {:src (str class-dir "/META-INF/maven/" (namespace lib) "/" (name lib) "/pom.xml")
                   :target "pom.xml"})))
 

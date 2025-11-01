@@ -6,8 +6,31 @@ A reactive view system for DataScript databases that enables materialized views 
 ## Overview
 
 Wizard provides a way to create materialized views over DataScript databases that automatically update when the underlying data changes. Still a work in progress, only should be used with non production applications.
+Supports
+- standard queries including pattern, predicate, function, or-join, not-join clauses
+- rules (Does not support recursive rules currently)
+
+Does not support parameterized queries (WIP)
 
 ## Core Functions
+
+
+### `transact`
+
+Wrapper around DataScript's `transact!` that triggers view updates.
+
+```clojure
+(transact conn tx-data)
+```
+
+**Parameters:**
+- `conn` - A DataScript connection
+- `tx-data` - Transaction data (same format as DataScript)
+
+**Returns:** Transaction result (same as DataScript's `transact!`)
+
+**Important:** Use this instead of `ds/transact!` to ensure views are updated.
+
 
 ### `add-view`
 
@@ -21,7 +44,6 @@ Creates a new materialized view for a DataScript connection.
 - `conn` - A DataScript connection
 - `id` - A unique identifier for this view
 - `query` - A DataScript query (datalog)
-- `args` - Optional map of query arguments (default: `{}`)
 - `rules` - Optional vector of datalog rules (default: `[]`)
 
 **Example:**
@@ -81,7 +103,6 @@ Registers a callback function to be called when a view changes.
     (println "Removed:" retracts)
     (println "Current view:" view)))
 ```
-
 ### `add+subscribe-to-view`
 
 Convenience function that combines `add-view` and `subscribe-to-view`.
@@ -98,28 +119,6 @@ Convenience function that combines `add-view` and `subscribe-to-view`.
   '[:find ?e ?name :where [?e :person/name ?name]])
 ```
 
-### `transact`
-
-Enhanced version of DataScript's `transact!` that triggers view updates.
-
-```clojure
-(transact conn tx-data)
-```
-
-**Parameters:**
-- `conn` - A DataScript connection
-- `tx-data` - Transaction data (same format as DataScript)
-
-**Returns:** Transaction result (same as DataScript's `transact!`)
-
-**Important:** Use this instead of `ds/transact!` to ensure views are updated.
-
-**Example:**
-```clojure
-(wizard/transact conn 
-  [[:db/add -1 :person/name "Charlie"]
-   [:db/add -1 :person/age 25]])
-```
 
 ### `reset-all`
 
@@ -129,56 +128,67 @@ Clears all views and subscriptions. Useful for testing or cleanup.
 (reset-all)
 ```
 
-## Usage Example
-
+**Subscribers can also return transaction data** to be automatically applied:
 ```clojure
-(require '[datascript.core :as ds]
-         '[wizard.core :as wizard])
-
-;; Create a DataScript connection
-(def conn (ds/create-conn))
-
-;; Create a view for adults
-(wizard/add-view conn :adults
-  '[:find ?person ?name
-    :where 
-    [?person :person/name ?name]
-    [?person :person/age ?age]
-    [(>= ?age 18)]])
-
-;; Subscribe to changes
-(wizard/subscribe-to-view :adults
+(wizard/add+subscribe-to-view conn :low-stock-items
   (fn [asserts retracts view]
-    (when (seq asserts)
-      (println "New adults:" asserts))
-    (when (seq retracts)
-      (println "Removed adults:" retracts))))
-
-;; Add some data - this will trigger the view update
-(wizard/transact conn
-  [[:db/add -1 :person/name "Alice"]
-   [:db/add -1 :person/age 25]
-   [:db/add -2 :person/name "Bob"] 
-   [:db/add -2 :person/age 16]])
-
-;; Check the current view
-(wizard/get-view :adults)
-;; => #{[1 "Alice"]}  ; Only Alice is >= 18
-
-;; Update Bob's age - this will add him to the view
-(wizard/transact conn
-  [[:db/add 2 :person/age 18]])
-
-;; The subscription callback will be called with:
-;; asserts: [[2 "Bob"]]
-;; retracts: []
-;; view: #{[1 "Alice"] [2 "Bob"]}
+    ;; Return transaction data that will be automatically applied
+    (for [[item-id name qty] asserts]
+      [[:db/add -1 :reorder/item item-id]
+       [:db/add -1 :reorder/quantity (* qty 3)]
+       [:db/add -1 :reorder/status :pending]]))
+  '[:find ?item ?name ?qty
+    :where 
+    [?item :item/name ?name]
+    [?item :item/quantity ?qty]
+    [(< ?qty 10)]])
 ```
 
-## Dependencies
+**Reactive chains - one view's changes trigger another view:**
+```clojure
+;; Create a view for low stock items that auto-creates reorders
+(wizard/add+subscribe-to-view
+ conn :low-stock-items
+ (fn [asserts _retracts _view]
+   (mapv (fn [[idx [item-id _name qty]]]
+           {:db/id (* -1 (inc idx))
+            :reorder/item item-id
+            :reorder/quantity (* qty 5)
+            :reorder/status :pending})
+         (map-indexed vector asserts)))
+ '[:find ?item ?name ?qty
+   :where
+   [?item :item/name ?name]
+   [?item :item/quantity ?qty]
+   [(< ?qty 10)]])
 
-- `datascript` - For the underlying database
-- `caudex` - For the circuit-based reactive system (local dependency)
+;; Create a view for pending reorders that sends notifications
+(wizard/add+subscribe-to-view conn :pending-reorders
+  (fn [asserts retracts view]
+    (doseq [[reorder item qty] asserts]
+      (println "ALERT: Created reorder for item" item "quantity" qty)))
+  '[:find ?reorder ?item ?qty
+    :where
+    [?reorder :reorder/item ?item]
+    [?reorder :reorder/quantity ?qty]
+    [?reorder :reorder/status :pending]])
+
+;; Now when inventory drops:
+(wizard/transact conn
+  [[:db/add 101 :item/name "Widget A"]
+   [:db/add 101 :item/quantity 25]])
+
+;; Later, after sales...
+(wizard/transact conn
+  [[:db/add 101 :item/quantity 8]]) ; Below threshold of 10
+
+;; This triggers a chain reaction:
+;; 1. :low-stock-items view updates with Widget A
+;; 2. Its subscriber creates a reorder with quantity 40 (8 * 5)
+;; 3. :pending-reorders view updates with new reorder
+;; 4. Its subscriber prints the reorder alert
+```
+
 
 ## Notes
 

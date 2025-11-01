@@ -4,14 +4,15 @@
         persistent-sorted-set/persistent-sorted-set {:mvn/version "0.3.0"}
         net.clojars.jumraiya/caudex {:mvn/version "0.1.2"}}
 
- :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.9.4"}}
+ :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.11"}}
                    :extra-paths ["."]
                    :ns-default build}
            
            :dev {:extra-paths ["test" "examples"]
                  :extra-deps {thheller/shadow-cljs {:mvn/version "2.28.23"}
                               org.clojure/clojurescript {:mvn/version "1.11.54"}
-                              com.datomic/peer {:mvn/version "1.0.7394"}}}
+                              com.datomic/peer {:mvn/version "1.0.7394"}
+                              com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}}}
            
            :test {:extra-paths ["test"]
                   :extra-deps {nubank/matcher-combinators {:mvn/version "3.9.1"}}}
