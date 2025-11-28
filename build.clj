@@ -2,9 +2,10 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'net.clojars.jumraiya/wizard)
-(def version "0.1.2")
+(def version "0.1.3")
 (def class-dir "target/classes")
-(def jar-file (format "target/%s-%s.jar" (name lib) version))
+(def basis (b/create-basis {:project "deps.edn"}))
+(def jar-file (format "target/net.clojars.jumraiya/%s-%s.jar" (name lib) version))
 
 (defn clean [_]
   (b/delete {:path "target"}))
@@ -64,3 +65,10 @@
     ;; Create jar with compiled classes (caudex included via Maven)
     (b/jar {:class-dir class-dir
             :jar-file jar-file})))
+(defn install [_]
+  (jar nil)
+  (b/install {:basis basis
+              :lib lib
+              :version version
+              :jar-file jar-file
+              :class-dir class-dir}))

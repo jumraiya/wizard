@@ -1,6 +1,7 @@
 (ns wizard.core
   (:require [caudex.circuit :as c]
             [wizard.circuit-impl :as c.impl]
+            [caudex.utils :as c.utils]
                                         ;[caudex.impl.circuit :as c.impl]
             [datascript.core :as ds]))
 
@@ -57,6 +58,22 @@
                       (mapv #(vector ::c/input (key %) (val %) -1 true) args))
         ccircuit (c/build-circuit query rules)
         circuit (c.impl/reify-circuit ccircuit)
+        view (into #{}
+                   (comp
+                    (filter #(true? (last %)))
+                    (map butlast)
+                    (map vec))
+                   (circuit tx-data))]
+    (swap! ccircuits assoc id ccircuit)
+    (swap! circuits assoc id {:circuit circuit :view view :diffs []})
+    (swap! subscriptions assoc id [])))
+
+
+(defn deserialize+add-view [conn id edn & {:keys [args] :or {args {}}}]
+  (let [ccircuit (c.utils/edn->circuit edn)
+        circuit (c.impl/reify-circuit ccircuit)
+        tx-data (into (ds/datoms @conn :eavt)
+                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
         view (into #{}
                    (comp
                     (filter #(true? (last %)))

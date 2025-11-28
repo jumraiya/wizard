@@ -262,3 +262,5 @@
         output-2 (circuit tx-data)]
     (is (= #{[1 2 true]} output))
     (is (= #{[1 2 true]} output-2))))
+
+
