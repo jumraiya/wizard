@@ -1,5 +1,6 @@
 (ns wizard.circuit-impl
-  (:require [caudex.utils :as utils]
+  (:require [caudex.circuit :as c]
+            [caudex.utils :as utils]
             [caudex.graph :as g]
             [caudex.dbsp :as dbsp]
             #?(:clj [clojure.data.json :as json])
@@ -272,11 +273,12 @@
             (get outputs (-> op-fns last ffirst))))))))
 
 
+
 (comment
   (let [cmp (mk-comparator [0 2])
         data [[1 0 2] [0 5 2] [1 0 1] [0 4 3]]
         sorted (sset/sorted-set-by cmp)
-        ;sorted (apply sset/sorted-set-by (into [cmp] data))
+                                        ;sorted (apply sset/sorted-set-by (into [cmp] data))
         ]
     (into sorted data)
     ;; sorted
@@ -293,7 +295,7 @@
                               (comp
                                (map
                                 #(vector (vec (mapv (fn [v] (if (= v "south") :south v))
-                                               (butlast %))) (last %))))
+                                                    (butlast %))) (last %))))
                               zset))
                       stream-data)
           ref-output-stream (first (get-in @caudex.utils/debug-data [:op-stream-map (dbsp/-get-id op) :outputs]))

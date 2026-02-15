@@ -28,6 +28,38 @@
     ;;    :cljs cmp)
     ))
 
+
+(defmacro compare-index [idx row-1-sym row-2-sym]
+  `(let [val-1# (nth ~row-1-sym ~idx)
+         val-2# (nth ~row-2-sym ~idx)]
+     (if (or (= val-1# :*) (= val-2# :*))
+       0
+       (if (= (type val-1#) (type val-2#))
+         (compare val-1# val-2#)
+         (compare (str val-1#) (str val-2#))))))
+
+(defmacro compare-row [cur-idx remaining row-1-sym row-2-sym]
+  `(let [res# (compare-index ~cur-idx ~row-1-sym ~row-2-sym)]
+     (if (not= 0 res#)
+       res#
+       ~(if (empty? remaining)
+          0
+          `(compare-row ~(first remaining) ~(rest remaining) ~row-1-sym ~row-2-sym)))))
+
+(defmacro gen-comparator [indices]
+  (let [row-1-sym (gensym)
+        row-2-sym (gensym)
+        x-forms `(compare-row ~(first indices) ~(rest indices) ~row-1-sym ~row-2-sym)]
+    `(fn [~row-1-sym ~row-2-sym]
+       ~x-forms)))
+
+(defmacro gen-op-zset [op]
+  (let [op (if (record? op)
+               op
+               (eval op))]
+      `(sset/sorted-set-by
+        (gen-comparator ~(range (inc (count (dbsp/-to-vector (dbsp/-get-output-type op)))))))))
+
 (defn mk-op-zset [op]
   (sset/sorted-set-by
    (mk-comparator (-> op dbsp/-get-output-type dbsp/-to-vector count inc range))))

@@ -137,7 +137,7 @@
                       [(ground :not-found) ?o]
                       [(ground "no-description") ?det]))]
         ccircuit (c/build-circuit q)
-        circuit (impl/reify-circuit ccircuit true)
+        circuit (impl/reify-circuit ccircuit)
         ;; circuit (impl/reify-circuit user/circuit true)
         _ (circuit
            [[:obj :object/description "desc" 123 true]
@@ -160,7 +160,6 @@
         output-2 (circuit
                   [[:action-3 :action/type :inspect 124 true]
                    [:action-3 :action/arg "desc" 124 true]])]
-    (prn output output-2)
     (is (match?
          #{[:action-2 "desc" :obj "detailed desc" true]}
          output))
