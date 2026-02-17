@@ -27,7 +27,8 @@
 
 (defn- sslice [state tx op-id lookup-key]
   (sset/slice
-   (getv state tx op-id)
+   (or (getv state tx op-id)
+       (sset/sorted-set))
    lookup-key lookup-key))
 
 (defrecord AtomCircuitState [^clojure.lang.Atom state]

@@ -222,9 +222,9 @@
      (let [output-streams (get-in @data [:op-stream-map op-id :outputs])]
        (swap! data update :streams
               #(reduce
-               (fn [streams stream-id]
-                 (update streams stream-id conj op-output))
-               %
+                (fn [streams stream-id]
+                  (update streams stream-id conj op-output))
+                %
                output-streams))))
    outputs)
   (swap! data update :t inc))
@@ -245,20 +245,14 @@
 ;;#trace
  (defn reify-circuit [circuit & [debug?]]
   (let [strata (utils/stratified-topsort circuit)
-        ;strata (mapv vector (utils/topsort-circuit circuit))
-        ;; strata-deps (reduce
-        ;;              (fn [deps ops]
-        ;;                (conj deps
-        ;;                      (into #{} (comp (map #(g/in-edges circuit %)) cat (map :src)  (map dbsp/-get-id)) ops)))
-        ;;              [#{'tx-data}]
-        ;;              (rest strata))
         op-fns (reduce
                 #(conj %1 (mapv (fn [op] [(dbsp/-get-id op) (build-fn circuit op)]) %2))
                 []
                 strata)
         delay-states (atom {})
-        debug-data (when debug?
-                     (atom (init-debug-data circuit)))]
+        ;; debug-data (when debug?
+        ;;              (atom (init-debug-data circuit)))
+        _ (reset! debug-data (init-debug-data circuit))]
     (fn [tx-data]
       (loop [outputs {'tx-data tx-data} strata op-fns
                                         ;deps strata-deps
@@ -275,6 +269,7 @@
 
 
 (comment
+  (def debug-data (atom nil))
   (let [cmp (mk-comparator [0 2])
         data [[1 0 2] [0 5 2] [1 0 1] [0 4 3]]
         sorted (sset/sorted-set-by cmp)

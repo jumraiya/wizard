@@ -203,7 +203,6 @@
         output-2 (circuit
                   [[:player :object/loc :loc 123 true]
                    [:player :object/loc :loc-2 123 false]])]
-    (prn output output-2)
     (is (match? #{[:obj :not-accessible true]} output))
     (is (match? #{[:obj :accessible true] [:obj :not-accessible false]} output-2))))
 

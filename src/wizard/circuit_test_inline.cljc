@@ -162,97 +162,93 @@
          #{[:action-3 "desc" :not-found "no-description" true]}
          output-2))))
 
-;; (deftest test-disjoint-not-join
-;;   (let [q '[:find ?o ?accessible
-;;             :where
-;;             [?o :object/desc ?d]
-;;             (not-join [?o]
-;;                       [?o :object/desc "player"])
-;;             (or-join [?o ?accessible]
-;;                      (and
-;;                       [?p :object/loc ?l]
-;;                       [?p :object/desc "player"]
-;;                       (or-join [?l ?p ?o]
-;;                                [?o :object/loc ?p]
-;;                                [?o :object/loc ?l])
-;;                       [(ground :accessible) ?accessible])
-;;                      (and
-;;                       (not-join [?o]
-;;                                 [?p :object/loc ?l]
-;;                                 [?p :object/desc "player"]
-;;                                 (or-join [?l ?p ?o]
-;;                                          [?o :object/loc ?p]
-;;                                          [?o :object/loc ?l]))
-;;                       [(ground :not-accessible) ?accessible]))]
-;;         ccircuit (c/build-circuit q)
-;;                                         ;_ (caudex.utils/prn-graph ccircuit)
-;;         circuit (impl/reify-circuit ccircuit)
-;;                                         ;not-accessible
-;;         output (circuit
-;;                 [[:obj :object/desc "desc" 123 true]
-;;                  [:obj :object/loc :loc 123 true]
-;;                  [:player :object/desc "player" 123 true]
-;;                  [:player :object/loc :loc-2 123 true]])
-;;                                         ;accessible
-;;         output-2 (circuit
-;;                   [[:player :object/loc :loc 123 true]
-;;                    [:player :object/loc :loc-2 123 false]])]
-;;     (prn output output-2)
-;;     (is (match? #{[:obj :not-accessible true]} output))
-;;     (is (match? #{[:obj :accessible true] [:obj :not-accessible false]} output-2))))
+(deftest test-disjoint-not-join
+  (let [circuit (impl/query->circuit '[:find ?o ?accessible
+                                       :where
+                                       [?o :object/desc ?d]
+                                       (not-join [?o]
+                                                 [?o :object/desc "player"])
+                                       (or-join [?o ?accessible]
+                                                (and
+                                                 [?p :object/loc ?l]
+                                                 [?p :object/desc "player"]
+                                                 (or-join [?l ?p ?o]
+                                                          [?o :object/loc ?p]
+                                                          [?o :object/loc ?l])
+                                                 [(ground :accessible) ?accessible])
+                                                (and
+                                                 (not-join [?o]
+                                                           [?p :object/loc ?l]
+                                                           [?p :object/desc "player"]
+                                                           (or-join [?l ?p ?o]
+                                                                    [?o :object/loc ?p]
+                                                                    [?o :object/loc ?l]))
+                                                 [(ground :not-accessible) ?accessible]))])
+        c-state (c.state/->AtomCircuitState (atom {}))
+        output (circuit c-state
+                [[:obj :object/desc "desc" 123 true]
+                 [:obj :object/loc :loc 123 true]
+                 [:player :object/desc "player" 123 true]
+                 [:player :object/loc :loc-2 123 true]])
+        output-2 (circuit c-state
+                  [[:player :object/loc :loc 123 true]
+                   [:player :object/loc :loc-2 123 false]])]
+    (is (match? #{[:obj :not-accessible true]} output))
+    (is (match? #{[:obj :accessible true] [:obj :not-accessible false]} output-2))))
 
-;; (deftest test-nested-rules
-;;   (let [q '[:find ?a ?b
-;;             :in $ %
-;;             :where
-;;             [?a :attr 12]
-;;             (rule ?a ?b)]
-;;         rules '[[(rule ?p ?q)
-;;                  [?p :attr-2 :a]
-;;                  [?q :attr-3 ?p]
-;;                  (nested-rule ?q)]
-;;                 [(nested-rule ?r)
-;;                  [(= ?r 10)]]]
-;;         tx-data [[1 :attr 12 123 true]
-;;                  [1 :attr-2 :a 123 true]
-;;                  [10 :attr-3 1 123 true]
-;;                  [2 :attr 12 123 true]
-;;                  [2 :attr-2 :a 123 true]
-;;                  [11 :attr-3 2 123 true]]
-;;         ccircuit (c/build-circuit q rules)
-;;         circuit (impl/reify-circuit ccircuit)
-;;         output (circuit tx-data)]
-;;     (is (match? #{[1 10 true]} output))))
+(deftest test-nested-rules
+  (let [tx-data [[1 :attr 12 123 true]
+                 [1 :attr-2 :a 123 true]
+                 [10 :attr-3 1 123 true]
+                 [2 :attr 12 123 true]
+                 [2 :attr-2 :a 123 true]
+                 [11 :attr-3 2 123 true]]
+        circuit (impl/query->circuit
+                 '[:find ?a ?b
+                   :in $ %
+                   :where
+                   [?a :attr 12]
+                   (rule ?a ?b)]
+                 '[[(rule ?p ?q)
+                    [?p :attr-2 :a]
+                    [?q :attr-3 ?p]
+                    (nested-rule ?q)]
+                   [(nested-rule ?r)
+                    [(= ?r 10)]]])
+        c-state (c.state/->AtomCircuitState (atom {}))
+        output (circuit c-state tx-data)]
+    (is (match? #{[1 10 true]} output))))
 
-;; (deftest test-rules-free-vars
-;;   (let [q '[:find ?c ?a
-;;             :in $ %
-;;             :where
-;;             (rule ?a :const)
-;;             [?c :attr ?a]]
-;;         rules '[[(rule ?c ?v)
-;;                  [?c :attr-2 ?v]]]
-;;         ccircuit (c/build-circuit q rules)
-;;         circuit (impl/reify-circuit ccircuit)
-;;         tx-data [[1 :attr 2 123 true]
-;;                  [2 :attr-2 :const 123 true]
-;;                  [3 :attr 4 123 true]]
-;;         output (circuit tx-data)
-
-;;             ;; (rule ?a :const)
-;;             ;; [?c :attr ?a]
-;;         rules '[[(rule ?c ?v)
-;;                  [?c :attr-2 10]
-;;                  (or-join [?v]
-;;                           [(= ?v :const)]
-;;                           [(= ?v :val2)])]]
-;;         ccircuit (c/build-circuit q rules)
-;;         circuit (impl/reify-circuit ccircuit)
-;;         tx-data [[1 :attr 2 123 true]
-;;                  [2 :attr-2 10 123 true] ;;matches
-;;                  ;; no match
-;;                  [4 :attr 3 123 true]]
-;;         output-2 (circuit tx-data)]
-;;     (is (= #{[1 2 true]} output))
-;;     (is (= #{[1 2 true]} output-2))))
+(deftest test-rules-free-vars
+  (let [circuit (impl/query->circuit
+                 '[:find ?c ?a
+                   :in $ %
+                   :where
+                   (rule ?a :const)
+                   [?c :attr ?a]]
+                 '[[(rule ?c ?v)
+                    [?c :attr-2 ?v]]])
+        tx-data [[1 :attr 2 123 true]
+                 [2 :attr-2 :const 123 true]
+                 [3 :attr 4 123 true]]
+        c-state (c.state/->AtomCircuitState (atom {}))
+        output (circuit c-state tx-data)
+        circuit (impl/query->circuit '[:find ?c ?a
+                                       :in $ %
+                                       :where
+                                       (rule ?a :const)
+                                       [?c :attr ?a]]
+                                     '[[(rule ?c ?v)
+                                        [?c :attr-2 10]
+                                        (or-join [?v]
+                                                 [(= ?v :const)]
+                                                 [(= ?v :val2)])]])
+        c-state (c.state/->AtomCircuitState (atom {}))
+        tx-data [[1 :attr 2 123 true]
+                 [2 :attr-2 10 123 true] ;;matches
+                 ;; no match
+                 [4 :attr 3 123 true]]
+        output-2 (circuit c-state tx-data)]
+    (is (= #{[1 2 true]} output))
+    (is (= #{[1 2 true]} output-2))))
 
