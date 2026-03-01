@@ -1,14 +1,13 @@
 (ns wizard.zset
   (:require
    [caudex.dbsp :as dbsp]
-   [me.tonsky.persistent-sorted-set :as sset]))
+   [org.replikativ.persistent-sorted-set :as sset]))
 
 (defn tx-data->zset [tx-data]
   (apply sset/sorted-set (mapv (fn [[e a v _tx add?]]
                                  [e a v add?])
                                tx-data)))
-
-(defn- mk-comparator [indices]
+(defn mk-comparator [indices]
   (let [cmp (fn [row-1 row-2]
               (loop [idx (first indices) indices (rest indices)]
                 (let [val-1 (nth row-1 idx)
@@ -85,19 +84,31 @@
       #(sset/sorted-set-by (mk-comparator (-> integrated-output count inc range))))))
 
 
+(defmacro gen-zset-init-body-for-join [integrated-output other-output]
+  (let [join-indices (get-join-indices integrated-output other-output)
+        unused-indices (remove
+                        #(contains? (set join-indices) %)
+                        (range (inc (count integrated-output))))]
+    (if (seq join-indices)
+      `(sset/sorted-set-by (gen-comparator ~(into join-indices unused-indices)))
+      `(sset/sorted-set-by (gen-comparator ~(-> integrated-output count inc range))))))
+
+(defn add-zset-row [zset row]
+  (let [tupl (subvec row 0 (dec (count row)))
+        remove-row (conj tupl (not (last row)))
+        remove? (if (and (set? zset)
+                         (seq (sset/slice zset remove-row remove-row)))
+                  true
+                  (some #(when (= % remove-row) true) zset))]
+    (if (true? remove?)
+      (if (set? zset)
+        (disj zset remove-row)
+        (filterv #(not= remove-row %) zset))
+      (conj zset row))))
+
 (defn add-zsets [zset-1 zset-2]
-  (reduce
-   (fn [zset row]
-     (let [tupl (subvec row 0 (dec (count row)))
-           remove-row (conj tupl (not (last row)))
-           remove? (if (and (set? zset)
-                            (seq (sset/slice zset remove-row remove-row)))
-                     true
-                     (some #(when (= % remove-row) true) zset))]
-       (if (true? remove?)
-         (if (set? zset)
-           (disj zset remove-row)
-           (filterv #(not= remove-row %) zset))
-         (conj zset row))))
-   zset-2
-   zset-1))
+  (let [[iterate-over add-to] (if (< (count zset-1)
+                                     (count zset-2))
+                                [zset-1 zset-2]
+                                [zset-2 zset-1])]
+    (reduce add-zset-row add-to iterate-over)))

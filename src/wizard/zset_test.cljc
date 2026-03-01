@@ -2,7 +2,7 @@
   (:require
    [wizard.zset :as z]
    [clojure.test :refer [deftest is]]
-   [me.tonsky.persistent-sorted-set :as sset]))
+   [org.replikativ.persistent-sorted-set :as sset]))
 
 (deftest add-zs-test
   (let [vars-1 '[?a ?b]
@@ -34,6 +34,10 @@
         zset (into (init-fn) [[23 "asd" :ed true]
                               [21 "efw" :asd true]
                               [54 "asd" :ded false]])
+        zset-2 (into (init-fn) [[21 "efw" :asd true]
+                                [23 "asd" :ed true]])
         lookup-key [:* "asd" :* :*]]
-    (is (= #{[23 "asd" :ed true] [54 "asd" :ded false]}
-           (sset/slice zset lookup-key lookup-key)))))
+    (is (= [[23 "asd" :ed true] [54 "asd" :ded false]]
+           (vec (sset/slice zset lookup-key lookup-key))))
+    (is (= [[23 "asd" :ed true]]
+         (vec (sset/slice zset-2 lookup-key lookup-key))))))

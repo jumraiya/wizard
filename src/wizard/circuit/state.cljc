@@ -1,6 +1,6 @@
 (ns wizard.circuit.state
   (:require [wizard.zset :as zs]
-            [me.tonsky.persistent-sorted-set :as sset]))
+            [org.replikativ.persistent-sorted-set :as sset]))
 
 (defprotocol CircuitState
   "Represents an interface to manage durable circuit state, each method operates on a zset, a seqable sorted set"
@@ -25,11 +25,12 @@
              state
              tx))))
 
-(defn- sslice [state tx op-id lookup-key]
+(defn- atom-slice [state tx op-id lookup-key]
   (sset/slice
    (or (getv state tx op-id)
        (sset/sorted-set))
    lookup-key lookup-key))
+
 
 (defrecord AtomCircuitState [^clojure.lang.Atom state]
   CircuitState
@@ -43,9 +44,10 @@
        (contains? (:deltas tx) op-id)
        (zs/add-zsets (get-in tx [:deltas op-id])))))
   (slice [this tx op-id lookup-key]
-    (sslice this tx op-id lookup-key))
+    (atom-slice this tx op-id lookup-key))
   (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
-                           (throw (Exception. "Trying to reset a delta state!"))
+                           #?(:cljs (js/Error. "Trying to reset a delta state!")
+                              :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [this tx] (upd this tx)))

@@ -6,7 +6,7 @@
             [matcher-combinators.matchers :as m]
             [wizard.circuit.state :as c.state]))
 
- (deftest simple-select
+(deftest simple-select
    (let [circuit (impl/query->circuit '[:find ?a ?b
                                         :where
                                         [?a :attr-1 ?b]])
@@ -252,3 +252,6 @@
     (is (= #{[1 2 true]} output))
     (is (= #{[1 2 true]} output-2))))
 
+(comment
+  (doseq [t [simple-select simple-join test-not-join test-preds test-or-join-3]]
+   (clojure.test/run-test t)))
