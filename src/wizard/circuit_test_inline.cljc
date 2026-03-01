@@ -253,5 +253,5 @@
     (is (= #{[1 2 true]} output-2))))
 
 (comment
-  (doseq [t [simple-select simple-join test-not-join test-preds test-or-join-3]]
+  (doseq [t [simple-select simple-join test-not-join test-disjoint-not-join test-preds test-or-join-3]]
    (clojure.test/run-test t)))
