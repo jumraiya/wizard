@@ -3,9 +3,9 @@
             [caudex.utils :as utils]
             [caudex.graph :as g]
             [caudex.dbsp :as dbsp]
+            [clojure.edn :as edn]
             [wizard.circuit.state :as c.state]
             [wizard.zset :as z]
-            [wizard.circuit-impl-helpers :as helpers]
             [clojure.walk :as w]
             [datascript.built-ins :as d.fns]
             [org.replikativ.persistent-sorted-set :as sset]))
@@ -84,11 +84,11 @@
       (fn [output# ~delta-row-sym]
         (when (= (symbol "join-17217") '~(:id op))
           (prn
-           (c.state/getv ~state-var ~tx-var '~integrated-id)
+           (wizard.circuit.state/getv ~state-var ~tx-var '~integrated-id)
            ~lookup-key
-           (sset/slice (c.state/getv ~state-var ~tx-var '~integrated-id) ~lookup-key ~lookup-key)
-           (c.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key)
-           (c.state/getv ~state-var ~tx-var '~other-id)))
+           (sset/slice (wizard.circuit.state/getv ~state-var ~tx-var '~integrated-id) ~lookup-key ~lookup-key)
+           (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key)
+           (wizard.circuit.state/getv ~state-var ~tx-var '~other-id)))
         (into output#
               (reduce
                (fn [new-rows# join-row#]
@@ -100,9 +100,9 @@
                             `(conj (into ~delta-row-key-sym ~join-row-key-sym) ~new-row-val-sym)
                             `(conj (into ~join-row-key-sym ~delta-row-key-sym) ~new-row-val-sym)))))
                []
-               (c.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key))))
+               (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key))))
       (z/gen-op-zset ~op)
-      (c.state/getv ~state-var ~tx-var '~other-id))))
+      (wizard.circuit.state/getv ~state-var ~tx-var '~other-id))))
 
 
 (defmacro gen-zset-for-join [op circuit]
@@ -136,11 +136,11 @@
   (let [op-id (dbsp/-get-id op)
         [input-1 input-2] (mapv dbsp/-get-id input-ops)]
     (case (dbsp/-get-op-type op)
-      :root `(c.state/put
+      :root `(wizard.circuit.state/put
               ~state-var
               ~tx-var
               '~op-id
-              (tx-data->zset (c.state/getv ~state-var ~tx-var :tx-data)))
+              (tx-data->zset (wizard.circuit.state/getv ~state-var ~tx-var :tx-data)))
       :filter (let [filters (:filters op)
                     projections (:projections op)
                     row-sym (gensym)
@@ -159,7 +159,7 @@
                                               args)))
                                         filters)
                                   [true])]
-                `(c.state/put
+                `(wizard.circuit.state/put
                  ~state-var
                  ~tx-var
                  '~op-id
@@ -172,7 +172,7 @@
                              (and ~@filter-body)))
                    (map (fn [~row-sym]
                           ~proj))
-                   (c.state/getv ~state-var ~tx-var '~input-1)))))
+                   (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))))
       :map (let [row-sym (gensym)
                  args (into []
                             (map #(if (dbsp/is-idx? %)
@@ -184,29 +184,29 @@
                  body (if (some #(when (dbsp/is-idx? %) %) (:args op))
                         `(conj (vec (butlast ~row-sym)) (apply ~mapping-fn ~args) (last ~row-sym))
                         `(vector (apply ~mapping-fn ~args) true))]
-             `(c.state/put ~state-var ~tx-var '~op-id
+             `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                            (into (z/gen-op-zset ~op)
                                  (map (fn [~row-sym]
                                         ~body))
-                                 (c.state/getv ~state-var ~tx-var '~input-1))))
-      :neg `(c.state/put ~state-var ~tx-var '~op-id
+                                 (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
+      :neg `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                          (into (z/gen-op-zset ~op)
                                (map #(conj (vec (butlast %)) (not (last %))))
-                               (c.state/getv ~state-var ~tx-var '~input-1)))
-      :delay `(c.state/put ~state-var ~tx-var '~op-id
-                           (c.state/getv ~state-var '~input-1))
-      :integrate `(c.state/add ~state-var ~tx-var '~op-id
+                               (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+      :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
+                           (wizard.circuit.state/getv ~state-var '~input-1))
+      :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
                                (into
                                 (gen-zset-for-join ~op ~circuit)
-                                (c.state/getv ~state-var ~tx-var '~input-1)))
-      :join `(c.state/put
+                                (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+      :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id
               (gen-join-body ~state-var ~tx-var ~input-ops ~op))
-      :add `(c.state/put
+      :add `(wizard.circuit.state/put
              ~state-var ~tx-var '~op-id
              (z/add-zsets
-              (c.state/getv ~state-var ~tx-var '~input-1)
-              (c.state/getv ~state-var ~tx-var '~input-2))))))
+              (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)
+              (wizard.circuit.state/getv ~state-var ~tx-var '~input-2))))))
 
 
 (defmacro gen-strata-fn [circuit ops-strata state-var tx-var cljs?]
@@ -241,12 +241,12 @@
                  (mapv (fn [op]
                          `(gen-strata-fn ~circuit ~op ~state-var ~tx-var ~cljs?)) ops)
                  `(fn [~tx-var]
-                    (c.state/commit ~state-var ~tx-var)
-                    (c.state/getv ~state-var ~tx-var '~final-op-id))))
+                    (wizard.circuit.state/commit ~state-var ~tx-var)
+                    (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))))
         xf `(comp ~@op-fns)]
     `(fn [~state-var tx-data#]
-       (let [~tx-var (c.state/init-tx ~state-var)
-             ~tx-var (c.state/put ~state-var ~tx-var :tx-data tx-data#)]
+       (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
+             ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
          (~xf ~tx-var)))))
 
 (defmacro query->circuit [query & [rules]]
@@ -258,47 +258,7 @@
     `(reify-circuit ~circuit)))
 
 
-(comment
-  (def query
-    '[:find ?o ?accessible
-      :where
-      [?o :object/desc ?d]
-      (not-join [?o]
-                [?o :object/desc "player"])
-      (or-join [?o ?accessible]
-               (and
-                [?p :object/loc ?l]
-                [?p :object/desc "player"]
-                (or-join [?l ?p ?o]
-                         [?o :object/loc ?p]
-                         [?o :object/loc ?l])
-                [(ground :accessible) ?accessible])
-               (and
-                (not-join [?o]
-                          [?p :object/loc ?l]
-                          [?p :object/desc "player"]
-                          (or-join [?l ?p ?o]
-                                   [?o :object/loc ?p]
-                                   [?o :object/loc ?l]))
-                [(ground :not-accessible) ?accessible]))])
+(defmacro read-from-file [url]
+  (let [data (edn/read-string (slurp url))]
+   `(edn->circuit ~data)))
 
-  (def ccirc (c/build-circuit query))
-  (def circ (reify-circuit ccirc))
-  (def circ
-    (query->circuit '[:find ?b
-                      :in $ %
-                      :where
-                      [?a :attr :s]
-                      [(inc ?a) ?b]
-                      (not-join [?a]
-                                [(> ?a 3)])]))
-  (circ c-state [[1 :attr :s 123 true]])
-
-  (defn compare-outputs [inline-state simple-ver]
-    (doseq [[op v] @(:state inline-state)]
-      (let [stream-id (first (get-in @simple-ver [:op-stream-map op :outputs]))
-            v2 (last (get-in @simple-ver [:streams stream-id]))]
-        (when (not= v v2)
-          (prn "output different for" op v v2)))))
-
-  (compare-outputs c-state wizard.circuit-impl/debug-data))

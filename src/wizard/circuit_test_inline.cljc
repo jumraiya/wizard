@@ -1,6 +1,5 @@
 (ns wizard.circuit-test-inline
   (:require [clojure.test :refer [deftest is]]
-            [caudex.circuit :as c]
             [matcher-combinators.test]
             [wizard.circuit-impl-inline :as impl]
             [matcher-combinators.matchers :as m]

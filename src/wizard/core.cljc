@@ -2,6 +2,8 @@
   (:require [caudex.circuit :as c]
             [wizard.circuit-impl :as c.impl]
             [caudex.utils :as c.utils]
+            [wizard.circuit-impl-inline :as impl-inline]
+            [wizard.circuit.state :as c.state]
                                         ;[caudex.impl.circuit :as c.impl]
             [datascript.core :as ds]))
 
@@ -14,8 +16,10 @@
 
 (defn- process-tx [_id tx-data]
   (reduce
-   (fn [tx [id {:keys [circuit view]}]]
-     (let [output (circuit tx-data)
+   (fn [tx [id {:keys [circuit view state]}]]
+     (let [output (if (some? state)
+                    (circuit state tx-data)
+                    (circuit tx-data))
            asserts (into []
                          (comp
                           (filter #(true? (last %)))
@@ -110,6 +114,27 @@
     (swap! circuits assoc id {:circuit circuit :view view :diffs []})
     (swap! subscriptions assoc id [])))
 
+
+(defn add-compiled-view [conn id circuit & {:keys [args] :or {args {}}}]
+  (prn "adding compiled view" circuit)
+  (let [tx-data (into (ds/datoms @conn :eavt)
+                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
+        c-state (c.state/->AtomCircuitState (atom {}))
+        _ (prn "got tx data")
+        view (try
+               (into #{}
+                     (comp
+                      (filter #(true? (last %)))
+                      (map butlast)
+                      (map vec))
+                     (circuit c-state tx-data))
+               (catch js/Error err
+                 (prn err)))]
+    (prn "got initial view")
+    (swap! circuits assoc id {:circuit circuit :view view :diffs [] :state c-state})
+    (swap! subscriptions assoc id [])))
+
+
 (defn transact
   "Transacts data to the DataScript connection and updates all registered views.
 
@@ -182,10 +207,12 @@
   (reset! circuits {}))
 
 
+
 (comment
   (def conn (ds/create-conn))
 
   (add-view conn :test '[:find ?a :where [?a :attr-1 ?b] [?b :attr-2 "asd"]])
+  ;(def circ (impl-inline/read-from-file "/Users/jumraiya/projects/escape-room/public/views/put-action.edn"))
 
   (ds/transact!
    conn
