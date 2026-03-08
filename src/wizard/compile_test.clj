@@ -92,14 +92,14 @@
               :overwrite?  false))
       ;; EDN files were written
       (doseq [{:keys [name]} (mapv :circuit test-cases)]
-        (is (.exists (java.io.File. edn-dir (str name ".edn")))))
+        (is (.exists (File. edn-dir (str name ".edn")))))
       ;; Compiled circuits work correctly
       (load-file output-path)
       (run-compiled-circuits ns-sym test-cases)
       (finally
         (.delete tmp-src)
-        (doseq [f (.listFiles (java.io.File. edn-dir))] (.delete f))
-        (.delete (java.io.File. edn-dir))
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
 
 
@@ -110,12 +110,10 @@
         ns-sym     'wizard.compile-test-overwrite-guard
         circuit    (first (mapv :circuit test-cases))]
     (try
-      ;; First compile creates the EDN
       (compile/compile-circuits
        (assoc (base-config ns-sym output-path edn-dir)
               :circuits   [circuit]
               :overwrite? false))
-      ;; Second compile without --overwrite must throw
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo #"EDN already exists"
            (compile/compile-circuits
@@ -124,8 +122,8 @@
                    :overwrite? false))))
       (finally
         (.delete tmp-src)
-        (doseq [f (.listFiles (java.io.File. edn-dir))] (.delete f))
-        (.delete (java.io.File. edn-dir))
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
 
 
@@ -146,8 +144,8 @@
                         :overwrite? true))))
       (finally
         (.delete tmp-src)
-        (doseq [f (.listFiles (java.io.File. edn-dir))] (.delete f))
-        (.delete (java.io.File. edn-dir))
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
 
 
@@ -158,14 +156,12 @@
         ns-sym     'wizard.compile-test-recompile
         circuit    (first (mapv :circuit test-cases))]
     (try
-      ;; First run writes EDN and source
       (compile/compile-circuits
        (assoc (base-config ns-sym output-path edn-dir)
               :circuits   [circuit]
               :overwrite? false))
-      (let [edn-f      (java.io.File. edn-dir (str (:name circuit) ".edn"))
-            edn-mtime  (.lastModified edn-f)]
-        ;; Recompile skips EDN generation — mtime unchanged
+      (let [edn-f     (File. edn-dir (str (:name circuit) ".edn"))
+            edn-mtime (.lastModified edn-f)]
         (compile/compile-circuits
          (assoc (base-config ns-sym output-path edn-dir)
                 :circuits    [circuit]
@@ -175,8 +171,8 @@
         (run-compiled-circuits ns-sym (filter #(= (:name circuit) (:name %)) test-cases)))
       (finally
         (.delete tmp-src)
-        (doseq [f (.listFiles (java.io.File. edn-dir))] (.delete f))
-        (.delete (java.io.File. edn-dir))
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
 
 
@@ -194,7 +190,7 @@
                    :recompile?  true))))
       (finally
         (.delete tmp-src)
-        (.delete (java.io.File. edn-dir))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
 
 
@@ -210,15 +206,49 @@
        (assoc (base-config ns-sym output-path edn-dir)
               :circuits   selected
               :overwrite? false))
-      ;; Only the selected EDN files exist
-      (is (.exists (java.io.File. edn-dir "simple-select.edn")))
-      (is (.exists (java.io.File. edn-dir "nested-rules.edn")))
-      (is (not (.exists (java.io.File. edn-dir "simple-join.edn"))))
+      (is (.exists (File. edn-dir "simple-select.edn")))
+      (is (.exists (File. edn-dir "nested-rules.edn")))
+      (is (not (.exists (File. edn-dir "simple-join.edn"))))
       (load-file output-path)
       (run-compiled-circuits ns-sym (filter #(#{"simple-select" "nested-rules"} (:name %))
                                             test-cases))
       (finally
         (.delete tmp-src)
-        (doseq [f (.listFiles (java.io.File. edn-dir))] (.delete f))
-        (.delete (java.io.File. edn-dir))
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
         (remove-ns ns-sym)))))
+
+
+(deftest test-load-config-from-clj-file
+  (let [edn-dir     (str (tmp-dir))
+        tmp-src     (File/createTempFile "wizard-compile" ".clj")
+        output-path (.getAbsolutePath tmp-src)
+        ns-sym      'wizard.compile-test-clj-config
+        cfg-ns      'wizard.compile-test-clj-config-input
+        cfg-file    (File/createTempFile "wizard-cfg" ".clj")]
+    (try
+      ;; Write a .clj config file with a `config` var.
+      ;; Queries must be quoted in source so symbols like ?a don't get resolved.
+      (spit cfg-file
+            (str "(ns " cfg-ns ")\n"
+                 "(def config\n"
+                 "  {:output-ns   \"" (str ns-sym) "\"\n"
+                 "   :output-path \"" output-path "\"\n"
+                 "   :target      :clj\n"
+                 "   :edn-dir     \"" edn-dir "\"\n"
+                 "   :circuits    [{:name  \"simple-select\"\n"
+                 "                  :query '[:find ?a ?b\n"
+                 "                           :where\n"
+                 "                           [?a :attr-1 ?b]]}]})\n"))
+      (let [loaded (compile/load-config (.getAbsolutePath cfg-file))]
+        (is (= (str ns-sym) (:output-ns loaded)))
+        (compile/compile-circuits (assoc loaded :overwrite? false))
+        (load-file output-path)
+        (run-compiled-circuits ns-sym (take 1 test-cases)))
+      (finally
+        (.delete cfg-file)
+        (.delete tmp-src)
+        (doseq [f (.listFiles (File. edn-dir))] (.delete f))
+        (.delete (File. edn-dir))
+        (remove-ns ns-sym)
+        (remove-ns cfg-ns)))))

@@ -17,7 +17,16 @@
   Add to deps.edn aliases:
     :compile {:main-opts [\"-m\" \"wizard.compile\"]}
 
-  Input EDN format:
+  Input can be an EDN file or a Clojure file. For a Clojure file the namespace
+  must define a var named `config` containing the same map as the EDN format:
+
+    (ns my.circuits-config)
+    (def config
+      {:output-ns   \"my.app.circuits\"
+       :output-path \"src/my/app/circuits.clj\"
+       ...})
+
+  EDN format:
     {:output-ns   \"my.app.circuits\"
      :output-path \"src/my/app/circuits.clj\"   ; .clj or .cljs
      :target      :clj                          ; :clj or :cljs
@@ -30,12 +39,31 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.pprint :as pp]
+            [clojure.walk :as w]
             [caudex.circuit :as c]
+            [clojure.string :as str]
+            [wizard.circuit-impl-inline :as impl]
             [caudex.utils :as utils]))
 
 
+(defn- load-clj-config [path]
+  (let [ns-sym (with-open [r (java.io.PushbackReader. (io/reader path))]
+                 (second (read r)))]    ; (ns foo.bar ...) -> foo.bar
+    (load-file path)
+    (if-let [v (ns-resolve (find-ns ns-sym) 'config)]
+      @v
+      (throw (ex-info (str "No `config` var found in " ns-sym)
+                      {:ns ns-sym :path path})))))
+
+
+(defn load-config [path]
+  (if (re-find #"\.clj[c|s]?$" path)
+    (load-clj-config path)
+    (edn/read-string (slurp path))))
+
+
 (defn- edn-file ^java.io.File [edn-dir circuit-name]
-  (io/file edn-dir (str circuit-name ".edn")))
+  (io/file edn-dir (str (if (string? circuit-name) circuit-name (name circuit-name)) ".edn")))
 
 
 (defn- write-edn-file! [edn-dir {:keys [name query rules]}]
@@ -46,14 +74,13 @@
 
 
 (defn- circuit-def [circuit-name edn-dir target]
-  `(~'def ~(symbol circuit-name)
-     (~'impl/read-from-file ~(str (edn-file edn-dir circuit-name)) ~target)))
+  (let [body (w/macroexpand-all `(impl/read-from-file ~(str (edn-file edn-dir circuit-name)) ~target))]
+   `(~'def ~(symbol circuit-name)
+           ~body)))
 
 
 (defn generate-forms [{:keys [output-ns target edn-dir circuits]}]
-  (let [ns-form `(~'ns ~(symbol output-ns)
-                   (:require [wizard.circuit-impl-inline :as ~'impl]
-                             [wizard.circuit.state :as ~'c.state]))]
+  (let [ns-form `(~'ns ~(symbol output-ns))]
     (cons ns-form
           (mapv #(circuit-def (:name %) edn-dir target) circuits))))
 
@@ -128,7 +155,7 @@
     (when (nil? input)
       (println "Usage: clj -M:compile <input.edn> [--overwrite] [--recompile] [--circuits n1,n2]")
       (System/exit 1))
-    (let [config   (edn/read-string (slurp input))
+    (let [config   (load-config input)
           circuits (cond->> (:circuits config)
                      only-circuits (filter #(contains? only-circuits (:name %))))]
       (when (empty? circuits)
