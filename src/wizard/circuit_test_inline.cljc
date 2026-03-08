@@ -237,11 +237,11 @@
                                        :where
                                        (rule ?a :const)
                                        [?c :attr ?a]]
-                                     '[[(rule ?c ?v)
-                                        [?c :attr-2 10]
-                                        (or-join [?v]
-                                                 [(= ?v :const)]
-                                                 [(= ?v :val2)])]])
+                  '[[(rule ?c ?v)
+                     [?c :attr-2 10]
+                     (or-join [?v]
+                              [(= ?v :const)]
+                              [(= ?v :val2)])]])
         c-state (c.state/->AtomCircuitState (atom {}))
         tx-data [[1 :attr 2 123 true]
                  [2 :attr-2 10 123 true] ;;matches
@@ -251,6 +251,9 @@
     (is (= #{[1 2 true]} output))
     (is (= #{[1 2 true]} output-2))))
 
+
+
+
 (comment
   (doseq [t [simple-select simple-join test-not-join test-disjoint-not-join test-preds test-or-join-3]]
-   (clojure.test/run-test t)))
+    (clojure.test/run-test t)))

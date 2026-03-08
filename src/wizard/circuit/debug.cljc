@@ -72,7 +72,6 @@
              (.click link)
              (.revokeObjectURL js/URL url))))
 
-#trace
  (defn compare-states [circuit caudex-impl inline-impl transactions]
    (let [inline-state (atom {})
          c-state (state/->AtomCircuitState inline-state)
@@ -90,9 +89,9 @@
                                {}
                                (map #(vector (-> % butlast vec) (last %)))
                                (state/getv c-state (dbsp/-get-id op)))]
+              (dump-debug-data debug-data)
+              (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
               (when (not= stream-data ref-data)
-                (dump-debug-data debug-data)
-                (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
                 (throw
                  (ex-info
                   (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data)

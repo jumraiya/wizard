@@ -6,8 +6,6 @@
             [clojure.edn :as edn]
             [wizard.circuit.state :as c.state]
             [wizard.zset :as z]
-            [clojure.walk :as w]
-            [datascript.built-ins :as d.fns]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 
@@ -29,22 +27,41 @@
    'mod {:clj 'clojure.core/mod :cljs 'cljs.core/mod}
    'ground {:clj 'clojure.core/identity :cljs 'cljs.core/identity}
    'identity {:clj 'clojure.core/identity :cljs 'cljs.core/identity}
-   ;; 'inc inc, 'dec dec, 'max max, 'min min,
-   ;; 'zero? zero?, 'pos? pos?, 'neg? neg?, 'even? even?, 'odd? odd?, 'compare compare,
-   ;; 'rand rand, 'rand-int rand-int,
-   ;; 'true? true?, 'false? false?, 'nil? nil?, 'some? some?, 'not not, 'and and-fn, 'or or-fn,
+   'inc {:clj 'clojure.core/inc :cljs 'cljs.core/inc}
+   'dec {:clj 'clojure.core/dec :cljs 'cljs.core/dec}
+   'keyword {:clj 'clojure.core/keyword :cljs 'cljs.core/keyword}
+   'max {:clj 'clojure.core/max :cljs 'cljs.core/max}
+   'min {:clj 'clojure.core/min :cljs 'cljs.core/min}
+   'zero? {:clj 'clojure.core/zero? :cljs 'cljs.core/zero?}
+   'pos? {:clj 'clojure.core/pos? :cljs 'cljs.core/pos?}
+   'neg? {:clj 'clojure.core/neg? :cljs 'cljs.core/neg?}
+   'even? {:clj 'clojure.core/even? :cljs 'cljs.core/even?}
+   'odd? {:clj 'clojure.core/odd? :cljs 'cljs.core/odd?}
+   'compare {:clj 'clojure.core/compare :cljs 'cljs.core/compare}
+   'rand {:clj 'clojure.core/rand :cljs 'cljs.core/rand}
+   'rand-int {:clj 'clojure.core/rand-int :cljs 'cljs.core/rand-int}
+   'true? {:clj 'clojure.core/true? :cljs 'cljs.core/true?}
+   'false? {:clj 'clojure.core/false? :cljs 'cljs.core/false?}
+   'nil? {:clj 'clojure.core/nil? :cljs 'cljs.core/nil?}
+   'some? {:clj 'clojure.core/some? :cljs 'cljs.core/some?}
+   'not {:clj 'clojure.core/not :cljs 'cljs.core/not}
+   'and {:clj 'clojure.core/and :cljs 'cljs.core/and}
+   'tuple {:clj 'clojure.core/vector :cljs 'cljs.core/vector}
+   'untuple {:clj 'clojure.core/identity :cljs 'cljs.core/identity}
+   're-find {:clj 'clojure.core/re-find :cljs 'cljs.core/re-find}
+   're-matches {:clj 'clojure.core/re-matches :cljs 'cljs.core/re-matches}
+   're-seq {:clj 'clojure.core/re-seq :cljs 'cljs.core/re-seq}
+   're-pattern {:clj 'clojure.core/re-pattern :cljs 'cljs.core/re-pattern}
+   ;;'or or-fn
    ;; 'complement complement, 'identical? identical?,
-   ;; 'keyword keyword, 'meta meta, 'name name, 'namespace namespace, 'type type
+   ;;  'meta meta, 'name name, 'namespace namespace, 'type type
    ,
    ;; 'vector vector, 'list list, 'set set, 'hash-map hash-map, 'array-map array-map,
    ;; 'count count, 'range range, 'not-empty not-empty, 'empty? empty?, 'contains? contains?,
    ;; 'str str, 'subs, subs, 'get get,
    ;; 'pr-str pr-str, 'print-str print-str, 'println-str println-str, 'prn-str prn-str,
-   ;; 're-find re-find, 're-matches re-matches, 're-seq re-seq, 're-pattern re-pattern,
    ;; '-differ? -differ?, 'get-else -get-else, 'get-some -get-some, 'missing? -missing?,
-   ;; 'clojure.string/blank? clojure.string/blank?, 'clojure.string/includes? str/includes?,
-   ;; 'clojure.string/starts-with? str/starts-with?, 'clojure.string/ends-with? str/ends-with?
-   ;; 'tuple vector, 'untuple identity
+
    })
 
 
@@ -82,13 +99,6 @@
                          (range key-len))]
     `(reduce
       (fn [output# ~delta-row-sym]
-        (when (= (symbol "join-17217") '~(:id op))
-          (prn
-           (wizard.circuit.state/getv ~state-var ~tx-var '~integrated-id)
-           ~lookup-key
-           (sset/slice (wizard.circuit.state/getv ~state-var ~tx-var '~integrated-id) ~lookup-key ~lookup-key)
-           (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key)
-           (wizard.circuit.state/getv ~state-var ~tx-var '~other-id)))
         (into output#
               (reduce
                (fn [new-rows# join-row#]
@@ -150,7 +160,7 @@
                     filter-body (if (seq filters)
                                   (mapv (fn [[pred & args]]
                                           `(apply
-                                            ~(:fn-sym (meta pred))
+                                            ~(or (:fn-sym (meta pred)) pred)
                                             ~(mapv
                                               (fn [idx|const]
                                                 (if (record? idx|const)
@@ -160,45 +170,48 @@
                                         filters)
                                   [true])]
                 `(wizard.circuit.state/put
-                 ~state-var
-                 ~tx-var
-                 '~op-id
-                 (reduce
-                  (fn [zset# row#]
-                    (z/add-zset-row zset# row#))
-                  (z/gen-op-zset ~op)
-                  (eduction
-                   (filter (fn [~row-sym]
-                             (and ~@filter-body)))
-                   (map (fn [~row-sym]
-                          ~proj))
-                   (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))))
+                  ~state-var
+                  ~tx-var
+                  '~op-id
+                  (reduce
+                   (fn [zset# row#]
+                     (z/add-zset-row zset# row#))
+                   (z/gen-op-zset ~op)
+                   (eduction
+                    (filter (fn [~row-sym]
+                              (and ~@filter-body)))
+                    (map (fn [~row-sym]
+                           ~proj))
+                    (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))))
       :map (let [row-sym (gensym)
                  args (into []
                             (map #(if (dbsp/is-idx? %)
                                     `(nth ~row-sym ~(:idx %))
                                     %))
                             (:args op))
-                 mapping-fn (get-in fn-syms [(:fn-sym (meta (:mapping-fn op))) (if cljs? :cljs :clj)])
+                 mapping-fn (get-in fn-syms
+                                    [(:fn-sym (meta (:mapping-fn op)))
+                                     (if cljs? :cljs :clj)]
+                                    (:mapping-fn op))
                                         ;(get d.fns/query-fns (:fn-sym (meta (:mapping-fn op))))
                  body (if (some #(when (dbsp/is-idx? %) %) (:args op))
                         `(conj (vec (butlast ~row-sym)) (apply ~mapping-fn ~args) (last ~row-sym))
                         `(vector (apply ~mapping-fn ~args) true))]
              `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
-                           (into (z/gen-op-zset ~op)
-                                 (map (fn [~row-sym]
-                                        ~body))
-                                 (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
+                                        (into (z/gen-op-zset ~op)
+                                              (map (fn [~row-sym]
+                                                     ~body))
+                                              (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
       :neg `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
-                         (into (z/gen-op-zset ~op)
-                               (map #(conj (vec (butlast %)) (not (last %))))
-                               (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+                                      (into (z/gen-op-zset ~op)
+                                            (map #(conj (vec (butlast %)) (not (last %))))
+                                            (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
-                           (wizard.circuit.state/getv ~state-var '~input-1))
+                                        (wizard.circuit.state/getv ~state-var '~input-1))
       :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
-                               (into
-                                (gen-zset-for-join ~op ~circuit)
-                                (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+                                (into
+                                 (gen-zset-for-join ~op ~circuit)
+                                 (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id
               (gen-join-body ~state-var ~tx-var ~input-ops ~op))
@@ -227,38 +240,59 @@
        (as-> ~tx-var ~tx-var
          ~@x-forms))))
 
-(defmacro reify-circuit [circuit]
-  (let [circuit (if (symbol? circuit)
-                  @(resolve circuit)
-                  circuit)
-        ops (utils/topsort-circuit circuit :stratify? true)
-        state-var (gensym)
-        tx-var (gensym)
-        final-op-id (-> ops last last dbsp/-get-id)
-        cljs? (some? (:ns &env))
-        op-fns (reverse
-                (conj
-                 (mapv (fn [op]
-                         `(gen-strata-fn ~circuit ~op ~state-var ~tx-var ~cljs?)) ops)
-                 `(fn [~tx-var]
-                    (wizard.circuit.state/commit ~state-var ~tx-var)
-                    (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))))
-        xf `(comp ~@op-fns)]
-    `(fn [~state-var tx-data#]
-       (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
-             ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
-         (~xf ~tx-var)))))
+(defmacro reify-circuit
+  ([circuit]
+   (let [cljs? (some? (:ns &env))]
+    `(reify-circuit ~circuit ~cljs?)))
+  ([circuit cljs?]
+   (let [circuit (if (symbol? circuit)
+                   @(resolve circuit)
+                   circuit)
+         ops (utils/topsort-circuit circuit :stratify? true)
+         state-var (gensym)
+         tx-var (gensym)
+         final-op-id (-> ops last last dbsp/-get-id)
+         op-fns (reverse
+                 (conj
+                  (mapv (fn [op]
+                          `(gen-strata-fn ~circuit ~op ~state-var ~tx-var ~cljs?)) ops)
+                  `(fn [~tx-var]
+                     (wizard.circuit.state/commit ~state-var ~tx-var)
+                     (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))))
+         xf `(comp ~@op-fns)]
+     `(fn [~state-var tx-data#]
+        (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
+              ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
+          (~xf ~tx-var))))))
 
-(defmacro query->circuit [query & [rules]]
-  (let [circuit (c/build-circuit (second query) (second rules))]
-    `(reify-circuit ~circuit)))
+(defmacro query->circuit
+  ([query] `(query->circuit ~query nil nil))
+  ([query rules] `(query->circuit ~query ~rules nil))
+  ([query rules target]
+   (let [[query rules] (mapv #(if (instance? clojure.lang.Cons %)
+                                (second %) %)
+                             [query rules])
+         circuit (c/build-circuit query rules)
+         cljs? (if (some? target)
+                 (= target :cljs)
+                 (some? (:ns &env)))]
+     `(reify-circuit ~circuit ~cljs?))))
 
-(defmacro edn->circuit [edn]
-  (let [circuit (utils/edn->circuit edn)]
-    `(reify-circuit ~circuit)))
+(defmacro edn->circuit
+  ([edn] `(edn->circuit ~edn nil))
+  ([edn target]
+   (let [circuit (utils/edn->circuit edn)
+         cljs? (if (some? target)
+                 (= target :cljs)
+                 (some? (:ns &env)))]
+     `(reify-circuit ~circuit ~cljs?))))
 
-
-(defmacro read-from-file [url]
-  (let [data (edn/read-string (slurp url))]
-   `(edn->circuit ~data)))
-
+(defmacro read-from-file
+  ([url] `(read-from-file ~url nil))
+  ([url target]
+   (let [data (edn/read-string (slurp url))
+         circuit (utils/edn->circuit data)
+         cljs? (if (some? target)
+                 (= target :cljs)
+                 (some? (:ns &env)))]
+     `(reify-circuit ~circuit ~cljs?))))
