@@ -18,6 +18,15 @@
            
            :test {:extra-paths ["test"]
                   :extra-deps {nubank/matcher-combinators {:mvn/version "3.9.1"}}}
+
+           :bench {:extra-paths ["." "benchmark"]
+                   :jvm-opts ["-server"
+                              "-XX:+UnlockDiagnosticVMOptions"
+                              "-Djdk.attach.allowAttachSelf"
+                              "-XX:+DebugNonSafepoints"]
+                   :extra-deps
+                   {metosin/jsonista {:mvn/version "0.3.3"}
+                    io.github.tonsky/duti {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}}}
            
            ;; nREPL server for AI to connect to
            ;; Include all paths you want available for development

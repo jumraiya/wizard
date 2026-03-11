@@ -1,0 +1,260 @@
+(ns datascript.bench.wizard
+  (:require
+   [datascript.core :as d]
+   [datascript.bench.bench :as bench]
+   [wizard.circuit-impl-inline :as impl]
+   [wizard.circuit.state :as c.state]))
+
+(def schema
+  {:id      {:db/unique :db.unique/identity}
+   :follows {:db/valueType   :db.type/ref
+             :db/cardinality :db.cardinality/many}
+   :alias   {:db/cardinality :db.cardinality/many}})
+
+;; Circuits compiled at macro expansion time
+
+(def q1  (impl/query->circuit '[:find ?e
+                                 :where [?e :name "Ivan"]]))
+
+(def q2  (impl/query->circuit '[:find ?e ?a
+                                 :where [?e :name "Ivan"]
+                                        [?e :age ?a]]))
+
+(def q3  (impl/query->circuit '[:find ?e ?a
+                                 :where [?e :name "Ivan"]
+                                        [?e :age ?a]
+                                        [?e :sex :male]]))
+
+(def q4  (impl/query->circuit '[:find ?e ?l ?a
+                                 :where [?e :name "Ivan"]
+                                        [?e :last-name ?l]
+                                        [?e :age ?a]
+                                        [?e :sex :male]]))
+
+(def q5  (impl/query->circuit '[:find ?e ?l ?s ?al
+                                 :where [?e :name "Anastasia"]
+                                        [?e :age 35]
+                                        [?e :last-name ?l]
+                                        [?e :sex ?s]
+                                        [?e :alias ?al]]))
+
+(def qpred1 (impl/query->circuit '[:find ?e ?s
+                                    :where [?e :salary ?s]
+                                           [(> ?s 50000)]]))
+
+(def qpred2 (impl/query->circuit '[:find ?e ?s
+                                    :where [?e :salary ?s]
+                                           [(> ?s 50000)]]))
+
+(def follows-circuit
+  (impl/query->circuit '[:find ?e ?e2
+                          :in $ %
+                          :where (follows ?e ?e2)]
+                        '[[(follows ?x ?y)
+                           [?x :follows ?y]]]))
+
+;; Helpers
+
+(defn- new-state [] (c.state/->AtomCircuitState (atom {})))
+
+(defn- apply-delta [view delta]
+  (reduce
+   (fn [v row]
+     (if (last row)
+       (conj v (vec (butlast row)))
+       (disj v (vec (butlast row)))))
+   view
+   delta))
+
+(defn- build-view [circuit datoms]
+  (apply-delta #{} (circuit (new-state) datoms)))
+
+;; Pre-loaded 100k db and its datoms (used by query benches)
+
+(def *conn100k
+  (delay
+   (let [conn (d/create-conn schema)]
+     (d/transact! conn @bench/*people20k)
+     conn)))
+
+(def *datoms100k
+  (delay (d/datoms @@*conn100k :eavt)))
+
+;; --- Add benchmarks ---
+;; Measures the cost of w/transact + incremental view maintenance.
+;; Each iteration starts with a fresh conn and circuit state.
+
+(defn bench-add-1 []
+  (bench/bench "add-1"
+    (let [state (new-state)
+          view  (volatile! #{})
+          conn  (d/create-conn schema)]
+      (doseq [p @bench/*people20k
+              tx [[:db/add (:db/id p) :name      (:name p)]
+                  [:db/add (:db/id p) :last-name (:last-name p)]
+                  [:db/add (:db/id p) :sex       (:sex p)]
+                  [:db/add (:db/id p) :age       (:age p)]
+                  [:db/add (:db/id p) :salary    (:salary p)]]]
+        (let [{:keys [tx-data]} (d/transact! conn [tx])]
+          (vswap! view apply-delta (q1 state tx-data)))))))
+
+(defn bench-add-5 []
+  (bench/bench "add-5"
+    (let [state (new-state)
+          view  (volatile! #{})
+          conn  (d/create-conn schema)]
+      (doseq [p @bench/*people20k]
+        (let [{:keys [tx-data]} (d/transact! conn [p])]
+          (vswap! view apply-delta (q1 state tx-data)))))))
+
+(defn bench-add-all []
+  (bench/bench "add-all"
+    (let [state (new-state)
+          {:keys [tx-data]} (d/transact (d/empty-db schema) @bench/*people20k)]
+      (apply-delta #{} (q1 state tx-data)))))
+
+;; --- Retract benchmark ---
+
+(defn bench-retract-5 []
+  (let [conn  (d/create-conn schema)
+        _     (d/transact! conn @bench/*people20k)
+        eids  (->> (d/datoms @conn :aevt :name) (map :e) shuffle)
+        state (new-state)
+        view  (volatile! (build-view q1 (d/datoms @conn :eavt)))]
+    (bench/bench "retract-5"
+      (doseq [eid eids]
+        (let [{:keys [tx-data]} (d/transact! conn [[:db.fn/retractEntity eid]])]
+          (vswap! view apply-delta (q1 state tx-data)))))))
+
+;; --- Query benchmarks ---
+;; The view is built once outside the bench loop from all datoms.
+;; The bench body just reads the pre-materialized result.
+
+(defn bench-q1 []
+  (let [view (build-view q1 @*datoms100k)]
+    (bench/bench "q1" view)))
+
+(defn bench-q2 []
+  (let [view (build-view q2 @*datoms100k)]
+    (bench/bench "q2" view)))
+
+(defn bench-q3 []
+  (let [view (build-view q3 @*datoms100k)]
+    (bench/bench "q3" view)))
+
+(defn bench-q4 []
+  (let [view (build-view q4 @*datoms100k)]
+    (bench/bench "q4" view)))
+
+(defn bench-q5-shortcircuit []
+  (let [view (build-view q5 @*datoms100k)]
+    (bench/bench "q5-shortcircuit" view)))
+
+(defn bench-qpred1 []
+  (let [view (build-view qpred1 @*datoms100k)]
+    (bench/bench "qpred1" view)))
+
+(defn bench-qpred2 []
+  (let [view (build-view qpred2 @*datoms100k)]
+    (bench/bench "qpred2" view)))
+
+;; --- Rules benchmarks ---
+;; Uses a single-hop (non-recursive) follows rule.
+;; The view is built once; the bench reads it.
+
+(defn- wide-datoms [depth width]
+  (-> (d/empty-db schema)
+      (d/db-with (bench/wide-db 1 depth width))
+      (d/datoms :eavt)))
+
+(defn- long-datoms [depth width]
+  (-> (d/empty-db schema)
+      (d/db-with (bench/long-db depth width))
+      (d/datoms :eavt)))
+
+(defn bench-rules-wide-3x3 []
+  (let [view (build-view follows-circuit (wide-datoms 3 3))]
+    (bench/bench "rules-wide-3x3" view)))
+
+(defn bench-rules-wide-5x3 []
+  (let [view (build-view follows-circuit (wide-datoms 5 3))]
+    (bench/bench "rules-wide-5x3" view)))
+
+(defn bench-rules-wide-7x3 []
+  (let [view (build-view follows-circuit (wide-datoms 7 3))]
+    (bench/bench "rules-wide-7x3" view)))
+
+(defn bench-rules-wide-4x6 []
+  (let [view (build-view follows-circuit (wide-datoms 4 6))]
+    (bench/bench "rules-wide-4x6" view)))
+
+(defn bench-rules-long-10x3 []
+  (let [view (build-view follows-circuit (long-datoms 10 3))]
+    (bench/bench "rules-long-10x3" view)))
+
+(defn bench-rules-long-30x3 []
+  (let [view (build-view follows-circuit (long-datoms 30 3))]
+    (bench/bench "rules-long-30x3" view)))
+
+(defn bench-rules-long-30x5 []
+  (let [view (build-view follows-circuit (long-datoms 30 5))]
+    (bench/bench "rules-long-30x5" view)))
+
+(def benches
+  {"add-1"              bench-add-1
+   "add-5"              bench-add-5
+   "add-all"            bench-add-all
+   "retract-5"          bench-retract-5
+   "q1"                 bench-q1
+   "q2"                 bench-q2
+   "q3"                 bench-q3
+   "q4"                 bench-q4
+   "q5-shortcircuit"    bench-q5-shortcircuit
+   "qpred1"             bench-qpred1
+   "qpred2"             bench-qpred2
+   ;; "rules-wide-3x3"     bench-rules-wide-3x3
+   ;; "rules-wide-5x3"     bench-rules-wide-5x3
+   ;; "rules-wide-7x3"     bench-rules-wide-7x3
+   ;; "rules-wide-4x6"     bench-rules-wide-4x6
+   ;; "rules-long-10x3"    bench-rules-long-10x3
+   ;; "rules-long-30x3"    bench-rules-long-30x3
+   ;; "rules-long-30x5"    bench-rules-long-30x5
+   })
+
+(defn -main
+  "clj -A:bench -M -m datascript.bench.wizard [bench-name ...]*"
+  [& args]
+  (let [args    (or args ())
+        names   (or (not-empty args) (sort (keys benches)))
+        _       (apply println "Wizard:" names)
+        longest (last (sort-by count names))]
+    (doseq [name names
+            :let [f (benches name)]]
+      (if (nil? f)
+        (println "Unknown benchmark:" name)
+        (let [{:keys [mean-ms]} (f)]
+          (println
+           (bench/right-pad name (count longest))
+           " "
+           (bench/left-pad (bench/round mean-ms) 6) "ms/op"))))
+    (shutdown-agents)))
+
+(comment
+  (bench-add-1)
+  (bench-add-5)
+  (bench-add-all)
+  (bench-retract-5)
+  (bench-q1)
+  (bench-q2)
+  (bench-q3)
+  (bench-q4)
+  (bench-q5-shortcircuit)
+  (bench-qpred1)
+  (bench-qpred2)
+  (bench-rules-wide-3x3)
+  (bench-rules-wide-5x3)
+  (bench-rules-wide-7x3)
+  (bench-rules-wide-4x6)
+  (bench-rules-long-10x3)
+  (bench-rules-long-30x3)
+  (bench-rules-long-30x5))
