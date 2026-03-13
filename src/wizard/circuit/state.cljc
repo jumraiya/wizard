@@ -50,7 +50,9 @@
                               :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx] (upd this tx)))
+  (commit [this tx]
+    ;(upd this tx)
+    ))
 
 
 

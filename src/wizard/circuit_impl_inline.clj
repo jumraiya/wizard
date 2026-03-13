@@ -9,6 +9,15 @@
             [org.replikativ.persistent-sorted-set :as sset]))
 
 
+(defn in [coll coll-2]
+  (boolean (clojure.set/subset? (set coll-2) (set coll))))
+
+(defn like [s s2]
+  (boolean (re-matches (re-pattern (clojure.string/replace s2 "%" ".*")) s)))
+
+(defn not-like [s s2]
+  (not (boolean (re-matches (re-pattern (clojure.string/replace s2 "%" ".*")) s))))
+
 (def fn-syms
   {'= {:clj 'clojure.core/= :cljs 'cljs.core/=}
    '== {:clj 'clojure.core/== :cljs 'cljs.core/==}
@@ -52,6 +61,9 @@
    're-matches {:clj 'clojure.core/re-matches :cljs 'cljs.core/re-matches}
    're-seq {:clj 'clojure.core/re-seq :cljs 'cljs.core/re-seq}
    're-pattern {:clj 'clojure.core/re-pattern :cljs 'cljs.core/re-pattern}
+   'in {:clj 'wizard.circuit-impl-inline/in :cljs 'wizard.circuit-impl-inline/in}
+   'like {:clj 'wizard.circuit-impl-inline/like :cljs 'wizard.circuit-impl-inline/like}
+   'not-like {:clj 'wizard.circuit-impl-inline/not-like :cljs 'wizard.circuit-impl-inline/not-like}
    ;;'or or-fn
    ;; 'complement complement, 'identical? identical?,
    ;;  'meta meta, 'name name, 'namespace namespace, 'type type
@@ -61,7 +73,6 @@
    ;; 'str str, 'subs, subs, 'get get,
    ;; 'pr-str pr-str, 'print-str print-str, 'println-str println-str, 'prn-str prn-str,
    ;; '-differ? -differ?, 'get-else -get-else, 'get-some -get-some, 'missing? -missing?,
-
    })
 
 
