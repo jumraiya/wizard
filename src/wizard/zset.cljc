@@ -8,7 +8,8 @@
 (defprotocol ZSet
   (slice [this prefix])
   (at [this k])
-  (add [this zset-row]))
+  (add-row [this zset-row])
+  (add-zset [this zset]))
 
 (defprotocol ZSetEntry
   (join-entry [this zset-row]))
@@ -24,6 +25,12 @@
   (join-entry [_this zset-row]
     (->ZSetVecEntry (into tuple (:tuple zset-row)) (and wt (:wt zset-row)))))
 
+(extend-type nil
+  ZSet
+  (slice [_ _])
+  (at [_ _])
+  (add-row [_ _])
+  (add-zset [_ zset] zset))
 
 (extend-type org.replikativ.persistent_sorted_set.PersistentSortedSet
   ZSet
@@ -34,23 +41,29 @@
       (if (> (count res) 1)
         (throw (ex-info "more than one row found for key!" {:key k}))
         (first res))))
-  (add [this zset-row]
-    (let [cur (at this (conj (:tuple zset-row) :*))]
+  (add-row [this zset-row]
+    (let [cur (at this (->ZSetVecEntry (:tuple zset-row) :*))]
       (if (and cur (not= (:wt zset-row) (:wt cur)))
         (disj this cur)
-        (conj this zset-row)))))
+        (conj this zset-row))))
+  (add-zset [this zset]
+    (reduce
+     add-row
+     this
+     zset)))
 
-(defrecord LMDBZSet [conn]
+(defrecord LMDBZSet [conn key-prefix]
   ZSet
   (slice [_this lookup]
     (lmdb/prefix-search conn lookup))
   (at [_this k]
     (lmdb/get-val conn k))
-  (add [this zset-row]
+  (add-row [this zset-row]
     (let [cur (at this (:tuple zset-row))]
       (if (and cur (not= (:wt zset-row) (:wt cur)))
         (lmdb/delete conn (:tuple cur))
-        (lmdb/put this (:tuple zset-row) (:wt zset-row))))))
+        (lmdb/put this (:tuple zset-row) (:wt zset-row)))))
+  (add-zset [this zset] (reduce add-row this zset)))
 
 
 (defn mk-comparator [indices]
@@ -81,11 +94,10 @@
 
 
 (defmacro compare-index [idx row-1-sym row-2-sym]
-  `(let [val-1# (nth (:tuple ~row-1-sym) ~idx)
-         val-2# (nth (:tuple ~row-2-sym) ~idx)
-                                        ;val-1# (nth ~row-1-sym ~idx)
-         ;val-2# (nth ~row-2-sym ~idx)
-         ]
+  `(let [t1#    (:tuple ~row-1-sym)
+         val-1# (if (< ~idx (count t1#)) (nth t1# ~idx) (:wt ~row-1-sym))
+         t2#    (:tuple ~row-2-sym)
+         val-2# (if (< ~idx (count t2#)) (nth t2# ~idx) (:wt ~row-2-sym))]
      (if (or (= val-1# :*) (= val-2# :*))
        0
        (if (= (type val-1#) (type val-2#))

@@ -27,10 +27,11 @@
              tx))))
 
 (defn- atom-slice [state tx op-id lookup-key]
-  (sset/slice
-   (or (getv state tx op-id)
-       (sset/sorted-set))
-   lookup-key lookup-key))
+  (let [entry (zs/->ZSetVecEntry (vec (butlast lookup-key)) (last lookup-key))]
+    (sset/slice
+     (or (getv state tx op-id)
+         (sset/sorted-set))
+     entry entry)))
 
 (defrecord AtomCircuitState [^clojure.lang.Atom state]
   CircuitState
@@ -42,7 +43,7 @@
      (clojure.core/get tx op-id)
      (cond-> (clojure.core/get @(:state this) op-id)
        (contains? (:deltas tx) op-id)
-       (zs/add-zsets (get-in tx [:deltas op-id])))))
+       (zs/add-zset (get-in tx [:deltas op-id])))))
   (slice [this tx op-id lookup-key]
     (atom-slice this tx op-id lookup-key))
   (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
@@ -65,12 +66,16 @@
        (contains? (:deltas tx) op-id)
        (zs/add-zsets (get-in tx [:deltas op-id])))))
   (slice [_this tx op-id lookup-key]
-    (reduce
-     zs/add-zset-row
-     (into
-      (sset/sorted-set)
-      (l/prefix-search ctx [op-id lookup-key]))
-     (filter #() (-> tx :deltas op-id))))
+    (let [lookup-key (filterv #(not= :* %) lookup-key)]
+      (reduce
+       zs/add-zset-row
+       (into
+        (sset/sorted-set)
+        (l/prefix-search ctx [op-id lookup-key]))
+       (filter #(every? (fn [[idx e]]
+                          (= (nth lookup-key idx) e))
+                        (map-indexed vector %))
+               (-> tx :deltas op-id)))))
   (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
                            #?(:cljs (js/Error. "Trying to reset a delta state!")
                               :clj (throw (Exception. "Trying to reset a delta state!")))
