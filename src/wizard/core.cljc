@@ -120,7 +120,6 @@
   (let [tx-data (into (ds/datoms @conn :eavt)
                       (mapv #(vector ::c/input (key %) (val %) -1 true) args))
         c-state (c.state/->AtomCircuitState (atom {}))
-        _ (prn "got tx data")
         view (try
                (into #{}
                      (comp
@@ -128,9 +127,8 @@
                       (map butlast)
                       (map vec))
                      (circuit c-state tx-data))
-               (catch js/Error err
+               (catch #?(:cljs js/Error :clj Exception) err
                  (prn err)))]
-    (prn "got initial view")
     (swap! circuits assoc id {:circuit circuit :view view :diffs [] :state c-state})
     (swap! subscriptions assoc id [])))
 

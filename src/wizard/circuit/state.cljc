@@ -1,5 +1,6 @@
 (ns wizard.circuit.state
-  (:require [wizard.zset :as zs]
+  (:require [wizard.lmdb :as l]
+            [wizard.zset :as zs]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 (defprotocol CircuitState
@@ -31,7 +32,6 @@
        (sset/sorted-set))
    lookup-key lookup-key))
 
-
 (defrecord AtomCircuitState [^clojure.lang.Atom state]
   CircuitState
   (init-tx [_] {})
@@ -50,12 +50,34 @@
                               :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx]
-    ;(upd this tx)
-    ))
+  (commit [this tx] (upd this tx)))
 
 
+(defrecord LMDBState [ctx]
+  CircuitState
+  (init-tx [_] {})
+  (getv [_this op-id]
+    (l/prefix-search ctx [op-id]))
+  (getv [_this tx op-id]
+    (or
+     (clojure.core/get tx op-id)
+     (cond-> (l/prefix-search ctx [op-id])
+       (contains? (:deltas tx) op-id)
+       (zs/add-zsets (get-in tx [:deltas op-id])))))
+  (slice [_this tx op-id lookup-key]
+    (reduce
+     zs/add-zset-row
+     (into
+      (sset/sorted-set)
+      (l/prefix-search ctx [op-id lookup-key]))
+     (filter #() (-> tx :deltas op-id))))
+  (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
+                           #?(:cljs (js/Error. "Trying to reset a delta state!")
+                              :clj (throw (Exception. "Trying to reset a delta state!")))
+                           (assoc tx op-id zset)))
+  (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
+  (commit [this tx] (upd this tx)))
 
-
-
-
+(defn lmdb-state [dir circuit-name]
+  (->LMDBState
+   (l/open-db dir circuit-name)))
