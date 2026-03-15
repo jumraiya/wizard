@@ -1,4 +1,4 @@
-(ns wizard.circuit-test-inline
+(ns wizard.circuit-impl-inline-test
   (:require [clojure.test :refer [deftest is]]
             [matcher-combinators.test]
             [wizard.circuit-impl-inline :as impl]
