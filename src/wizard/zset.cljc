@@ -1,12 +1,58 @@
 (ns wizard.zset
   (:require
    [caudex.dbsp :as dbsp]
+   [wizard.lmdb :as lmdb]
    [org.replikativ.persistent-sorted-set :as sset]))
 
-(defn tx-data->zset [tx-data]
-  (apply sset/sorted-set (mapv (fn [[e a v _tx add?]]
-                                 [e a v add?])
-                               tx-data)))
+
+(defprotocol ZSet
+  (slice [this prefix])
+  (at [this k])
+  (add [this zset-row]))
+
+(defprotocol ZSetEntry
+  (join-entry [this zset-row]))
+
+(defrecord ZSetVecEntry [tuple wt]
+  ;; Object
+  ;; (equals [this other]
+  ;;   (and (instance? other ZSetVecEntry)
+  ;;        (= (:tuple this) (:tuple other))))
+  ;; (hashCode [_]
+  ;;   (hash tuple))
+  ZSetEntry
+  (join-entry [_this zset-row]
+    (->ZSetVecEntry (into tuple (:tuple zset-row)) (and wt (:wt zset-row)))))
+
+
+(extend-type org.replikativ.persistent_sorted_set.PersistentSortedSet
+  ZSet
+  (slice [this lookup]
+    (sset/slice this lookup lookup))
+  (at [this k]
+    (when-let [res (slice this k)]
+      (if (> (count res) 1)
+        (throw (ex-info "more than one row found for key!" {:key k}))
+        (first res))))
+  (add [this zset-row]
+    (let [cur (at this (conj (:tuple zset-row) :*))]
+      (if (and cur (not= (:wt zset-row) (:wt cur)))
+        (disj this cur)
+        (conj this zset-row)))))
+
+(defrecord LMDBZSet [conn]
+  ZSet
+  (slice [_this lookup]
+    (lmdb/prefix-search conn lookup))
+  (at [_this k]
+    (lmdb/get-val conn k))
+  (add [this zset-row]
+    (let [cur (at this (:tuple zset-row))]
+      (if (and cur (not= (:wt zset-row) (:wt cur)))
+        (lmdb/delete conn (:tuple cur))
+        (lmdb/put this (:tuple zset-row) (:wt zset-row))))))
+
+
 (defn mk-comparator [indices]
   (let [cmp (fn [row-1 row-2]
               (loop [idx (first indices) indices (rest indices)]
@@ -27,10 +73,19 @@
     ;;    :cljs cmp)
     ))
 
+(defn tx-data->zset [tx-data]
+  (apply sset/sorted-set (mapv (fn [[e a v _tx add?]]
+                                 [e a v add?])
+                               tx-data)))
+
+
 
 (defmacro compare-index [idx row-1-sym row-2-sym]
-  `(let [val-1# (nth ~row-1-sym ~idx)
-         val-2# (nth ~row-2-sym ~idx)]
+  `(let [val-1# (nth (:tuple ~row-1-sym) ~idx)
+         val-2# (nth (:tuple ~row-2-sym) ~idx)
+                                        ;val-1# (nth ~row-1-sym ~idx)
+         ;val-2# (nth ~row-2-sym ~idx)
+         ]
      (if (or (= val-1# :*) (= val-2# :*))
        0
        (if (= (type val-1#) (type val-2#))

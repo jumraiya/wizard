@@ -77,9 +77,12 @@
 
 
 (defmacro tx-data->zset [& body]
-  `(apply sset/sorted-set (mapv (fn [[e# a# v# _tx# add?#]]
-                                  [e# a# v# add?#])
-                                ~@body)))
+  `(into (sset/sorted-set-by (z/gen-comparator [0 1 2]))
+         (mapv (fn [[e# a# v# _tx# add?#]]
+                 (z/->ZSetVecEntry [e# a# v#] add?#)
+                                        ;[e# a# v# add?#]
+                 )
+               ~@body)))
 
 
 (defmacro gen-join-body [state-var tx-var input-ops op]
@@ -104,22 +107,28 @@
         delta-row-key-sym (gensym)
         join-row-key-sym (gensym)
         new-row-val-sym (gensym)
+        join-row-sym (gensym)
         lookup-key (mapv #(if (contains? replace-map %)
-                            `(nth ~delta-row-sym ~(get replace-map %))
+                            `(nth (:tuple ~delta-row-sym) ~(get replace-map %))
+                            ;`(nth ~delta-row-sym ~(get replace-map %))
                             :*)
                          (range key-len))]
     `(reduce
       (fn [output# ~delta-row-sym]
         (into output#
               (reduce
-               (fn [new-rows# join-row#]
-                 (let [~delta-row-key-sym (subvec ~delta-row-sym 0 (-> ~delta-row-sym count dec))
-                       ~join-row-key-sym (subvec join-row# 0 (-> join-row# count dec))
-                       ~new-row-val-sym (and (last ~delta-row-sym) (last join-row#))]
-                   (conj new-rows#
-                         ~(if flipped?
-                            `(conj (into ~delta-row-key-sym ~join-row-key-sym) ~new-row-val-sym)
-                            `(conj (into ~join-row-key-sym ~delta-row-key-sym) ~new-row-val-sym)))))
+               (fn [new-rows# ~join-row-sym]
+                 (conj new-rows#
+                       ~(if flipped?
+                          `(z/join-entry ~delta-row-sym ~join-row-sym)
+                          `(z/join-entry ~join-row-sym ~delta-row-sym)))
+                 #_(let [~delta-row-key-sym (subvec ~delta-row-sym 0 (-> ~delta-row-sym count dec))
+                         ~join-row-key-sym (subvec join-row# 0 (-> join-row# count dec))
+                         ~new-row-val-sym (and (last ~delta-row-sym) (last join-row#))]
+                     (conj new-rows#
+                           ~(if flipped?
+                              `(conj (into ~delta-row-key-sym ~join-row-key-sym) ~new-row-val-sym)
+                              `(conj (into ~join-row-key-sym ~delta-row-key-sym) ~new-row-val-sym)))))
                []
                (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key))))
       (z/gen-op-zset ~op)
@@ -166,7 +175,17 @@
                     projections (:projections op)
                     row-sym (gensym)
                     proj  (if (seq projections)
-                            (conj (mapv #(do `(nth ~row-sym ~(:idx %))) projections) `(last ~row-sym))
+                            `(z/->ZSetVecEntry
+                             ~(mapv
+                               (fn [{:keys [idx]}]
+                                 `(nth (:tuple ~row-sym) ~idx))
+                               projections)
+                             (:wt ~row-sym))
+                            #_(conj (mapv
+                                     #(do
+                                        `(nth ~row-sym ~(:idx %)))
+                                     projections)
+                                    `(last ~row-sym))
                             row-sym)
                     filter-body (if (seq filters)
                                   (mapv (fn [[pred & args]]
@@ -175,7 +194,8 @@
                                             ~(mapv
                                               (fn [idx|const]
                                                 (if (record? idx|const)
-                                                  `(get ~row-sym ~(:idx idx|const))
+                                                  `(get (:tuple ~row-sym) ~(:idx idx|const))
+                                        ;`(get ~row-sym ~(:idx idx|const))
                                                   idx|const))
                                               args)))
                                         filters)
@@ -186,7 +206,9 @@
                   '~op-id
                   (reduce
                    (fn [zset# row#]
-                     (z/add-zset-row zset# row#))
+                     (z/add zset# row#)
+                     ;(z/add-zset-row zset# row#)
+                     )
                    (z/gen-op-zset ~op)
                    (eduction
                     (filter (fn [~row-sym]
@@ -197,7 +219,8 @@
       :map (let [row-sym (gensym)
                  args (into []
                             (map #(if (dbsp/is-idx? %)
-                                    `(nth ~row-sym ~(:idx %))
+                                    `(nth (:tuple ~row-sym) ~(:idx %))
+                                    ;`(nth ~row-sym ~(:idx %))
                                     %))
                             (:args op))
                  mapping-fn (get-in fn-syms
@@ -206,8 +229,14 @@
                                     (:mapping-fn op))
                                         ;(get d.fns/query-fns (:fn-sym (meta (:mapping-fn op))))
                  body (if (some #(when (dbsp/is-idx? %) %) (:args op))
-                        `(conj (vec (butlast ~row-sym)) (apply ~mapping-fn ~args) (last ~row-sym))
-                        `(vector (apply ~mapping-fn ~args) true))]
+                        (z/->ZSetVecEntry (conj (:tuple ~row-sym)
+                                                (apply ~mapping-fn ~args))
+                                          (:wt ~row-sym))
+                        (z/->ZSetVecEntry (apply ~mapping-fn ~args) true)
+                        ;; `(conj (vec (butlast ~row-sym)) (apply ~mapping-fn ~args)
+                        ;;        (last ~row-sym))
+                        ;; `(vector (apply ~mapping-fn ~args) true)
+                        )]
              `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                                         (into (z/gen-op-zset ~op)
                                               (map (fn [~row-sym]
@@ -215,22 +244,28 @@
                                               (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
       :neg `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                                       (into (z/gen-op-zset ~op)
-                                            (map #(conj (vec (butlast %)) (not (last %))))
+                                            (map #(z/->ZSetVecEntry (:tuple %) (not (:wt %)))
+                                             ;#(conj (vec (butlast %)) (not (last %)))
+                                             )
                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                                         (wizard.circuit.state/getv ~state-var '~input-1))
       :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
-                                (into
-                                 (gen-zset-for-join ~op ~circuit)
-                                 (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+                                            (into
+                                             (gen-zset-for-join ~op ~circuit)
+                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id
               (gen-join-body ~state-var ~tx-var ~input-ops ~op))
       :add `(wizard.circuit.state/put
              ~state-var ~tx-var '~op-id
-             (z/add-zsets
+             (reduce
+              #(z/add %1 %2)
               (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)
-              (wizard.circuit.state/getv ~state-var ~tx-var '~input-2))))))
+              (wizard.circuit.state/getv ~state-var ~tx-var '~input-2))
+             #_(z/add-zsets
+                (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)
+                (wizard.circuit.state/getv ~state-var ~tx-var '~input-2))))))
 
 
 (defmacro gen-strata-fn [circuit ops-strata state-var tx-var cljs?]
@@ -243,9 +278,11 @@
                                          #(g/attr circuit % :arg)
                                          (g/in-edges circuit op)))]))
                        (map (fn get-body [[op input-ops]]
-                              `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
-                       (map (fn [body]
-                              `(do ~body))))
+                              [op `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)]))
+                       (map (fn [[op body]]
+                              `(do
+                                 (prn "running" '~(:id op))
+                                 ~body))))
                       ops-strata)]
     `(fn [~tx-var]
        (as-> ~tx-var ~tx-var
@@ -254,7 +291,7 @@
 (defmacro reify-circuit
   ([circuit]
    (let [cljs? (some? (:ns &env))]
-    `(reify-circuit ~circuit ~cljs?)))
+     `(reify-circuit ~circuit ~cljs?)))
   ([circuit cljs?]
    (let [circuit (if (symbol? circuit)
                    @(resolve circuit)
@@ -274,7 +311,9 @@
      `(fn [~state-var tx-data#]
         (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
               ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
-          (~xf ~tx-var))))))
+          (into #{}
+                (map #(conj (:tuple %) (:wt %)))
+                (~xf ~tx-var)))))))
 
 (defmacro query->circuit
   ([query] `(query->circuit ~query nil nil))
