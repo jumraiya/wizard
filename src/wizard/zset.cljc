@@ -54,15 +54,21 @@
 
 (defrecord LMDBZSet [conn key-prefix]
   ZSet
-  (slice [_this lookup]
-    (lmdb/prefix-search conn lookup))
-  (at [_this k]
-    (lmdb/get-val conn k))
+  (slice [_this lookup-key]
+    (let [prefix (into [key-prefix] (filterv #(not= :* %) lookup-key))]
+      (into []
+            (map (fn [[k v]] (->ZSetVecEntry (vec (rest k)) v)))
+            (lmdb/prefix-search conn prefix))))
+  (at [_this k-tuple]
+    (when-let [v (lmdb/get-val conn (into [key-prefix] k-tuple))]
+      (->ZSetVecEntry k-tuple v)))
   (add-row [this zset-row]
-    (let [cur (at this (:tuple zset-row))]
-      (if (and cur (not= (:wt zset-row) (:wt cur)))
-        (lmdb/delete conn (:tuple cur))
-        (lmdb/put this (:tuple zset-row) (:wt zset-row)))))
+    (let [full-key (into [key-prefix] (:tuple zset-row))
+          cur-wt   (lmdb/get-val conn full-key)]
+      (cond
+        (nil? cur-wt)                (lmdb/put conn full-key (:wt zset-row))
+        (not= cur-wt (:wt zset-row)) (lmdb/delete conn full-key))
+      this))
   (add-zset [this zset] (reduce add-row this zset)))
 
 

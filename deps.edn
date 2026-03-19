@@ -16,7 +16,8 @@
                               com.datomic/peer {:mvn/version "1.0.7394"}
                               com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}
                               datalevin/datalevin {:mvn/version "0.10.7"}
-                              com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}}
+                              com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}
+                              criterium/criterium {:mvn/version "0.4.6"}}
                  :jvm-opts ["-Djdk.attach.allowAttachSelf"]}
 
            :test {:extra-paths ["test"]
@@ -41,6 +42,7 @@
                              :exec-fn benchmark.datalevin.wizard/-main
                              :extra-deps
                              {datalevin/datalevin {:mvn/version "0.10.7"}}}
+           :datalevin-test {:exec-fn benchmark.datalevin.wizard/test-bench}
            :datascript-bench {:extra-paths ["."]
                               :jvm-opts ["-server"
                                          "-XX:+UnlockDiagnosticVMOptions"

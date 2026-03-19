@@ -3,6 +3,7 @@
   (:import
    (org.lmdbjava Env Dbi DbiFlags EnvFlags GetOp PutFlags SeekOp Txn)
    (java.nio ByteBuffer)
+   (java.io File)
    (java.nio.charset StandardCharsets)
    (java.util Arrays)))
 
@@ -14,12 +15,14 @@
 ;;   0x02 = Other   → pr-str UTF-8 bytes (keywords, numbers, vectors, maps, …)
 
 (defn- encode ^bytes [v]
-  (if (string? v)
+  (cond
+    (string? v)
     (let [raw (.getBytes ^String v StandardCharsets/UTF_8)
           buf (byte-array (inc (alength raw)))]
       (aset-byte buf 0 1)
       (System/arraycopy raw 0 buf 1 (alength raw))
       buf)
+    :else
     (let [raw (.getBytes (pr-str v) StandardCharsets/UTF_8)
           buf (byte-array (inc (alength raw)))]
       (aset-byte buf 0 2)
@@ -41,11 +44,11 @@
 (defn open-db
   "Open (or create) a named LMDB database at dir (a java.io.File).
    Returns a map with :env and :db keys."
-  [^java.io.File dir ^String db-name]
+  [dir ^String db-name]
   (let [env (-> (Env/create)
                 (.setMapSize 500485760)
                 (.setMaxDbs 20)
-                (.open dir (make-array EnvFlags 0)))
+                (.open (File. dir) (make-array EnvFlags 0)))
         db  (.openDbi env db-name (into-array DbiFlags [DbiFlags/MDB_CREATE]))]
     {:env env :db db}))
 
@@ -90,8 +93,9 @@
       (if (.get cursor key-buf GetOp/MDB_SET_RANGE)
         (loop [results []]
           (let [k-bs (buf->bytes (.key cursor))]
-            (if (Arrays/equals prefix-bytes 0 (alength prefix-bytes)
-                               k-bs         0 (alength prefix-bytes))
+            (if (and (>= (alength k-bs) (alength prefix-bytes))
+                   (Arrays/equals prefix-bytes 0 (alength prefix-bytes)
+                                  k-bs         0 (alength prefix-bytes)))
               (let [entry [(decode k-bs) (decode (buf->bytes (.val cursor)))]]
                 (if (.seek cursor SeekOp/MDB_NEXT)
                   (recur (conj results entry))

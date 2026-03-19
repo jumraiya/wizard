@@ -13,6 +13,7 @@
 
 (defonce ^:private ccircuits (atom {}))
 
+#?(:clj (set! *warn-on-reflection* true))
 
 (defn- process-tx [_id tx-data]
   (reduce

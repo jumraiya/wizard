@@ -6,6 +6,7 @@
             [clojure.edn :as edn]
             [wizard.circuit.state :as c.state]
             [wizard.zset :as z]
+            [criterium.core :as cr]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 
@@ -44,6 +45,7 @@
    'zero? {:clj 'clojure.core/zero? :cljs 'cljs.core/zero?}
    'pos? {:clj 'clojure.core/pos? :cljs 'cljs.core/pos?}
    'neg? {:clj 'clojure.core/neg? :cljs 'cljs.core/neg?}
+
    'even? {:clj 'clojure.core/even? :cljs 'cljs.core/even?}
    'odd? {:clj 'clojure.core/odd? :cljs 'cljs.core/odd?}
    'compare {:clj 'clojure.core/compare :cljs 'cljs.core/compare}
@@ -111,6 +113,11 @@
                          (range key-len))]
     `(reduce
       (fn [output# ~delta-row-sym]
+        (when (= '~(dbsp/-get-id op) '~'join-335489)
+         (prn
+          "lookup" ~lookup-key
+          "int" (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key)
+          "other" (wizard.circuit.state/getv ~state-var ~tx-var '~other-id)))
         (into output#
               (reduce
                (fn [new-rows# ~join-row-sym]
@@ -124,7 +131,7 @@
       (wizard.circuit.state/getv ~state-var ~tx-var '~other-id))))
 
 
-(defmacro gen-zset-for-join [op circuit]
+(defmacro gen-zset-for-join [state-var op circuit]
   (if-let [join-output (or
                         (first
                          (into []
@@ -165,11 +172,11 @@
                     row-sym (gensym)
                     proj  (if (seq projections)
                             `(z/->ZSetVecEntry
-                             ~(mapv
-                               (fn [{:keys [idx]}]
-                                 `(nth (:tuple ~row-sym) ~idx))
-                               projections)
-                             (:wt ~row-sym))
+                              ~(mapv
+                                (fn [{:keys [idx]}]
+                                  `(nth (:tuple ~row-sym) ~idx))
+                                projections)
+                              (:wt ~row-sym))
                             row-sym)
                     filter-body (if (seq filters)
                                   (mapv (fn [[pred & args]]
@@ -214,8 +221,8 @@
                                         ;(get d.fns/query-fns (:fn-sym (meta (:mapping-fn op))))
                  body (if (some #(when (dbsp/is-idx? %) %) (:args op))
                         `(z/->ZSetVecEntry (conj (:tuple ~row-sym)
-                                                (apply ~mapping-fn ~args))
-                                          (:wt ~row-sym))
+                                                 (apply ~mapping-fn ~args))
+                                           (:wt ~row-sym))
                         `(z/->ZSetVecEntry [(apply ~mapping-fn ~args)] true))]
              `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                                         (into (z/gen-op-zset ~op)
@@ -227,11 +234,14 @@
                                             (map #(z/->ZSetVecEntry (:tuple %) (not (:wt %))))
                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
-                                        (wizard.circuit.state/getv ~state-var '~input-1))
+                                        (c.state/->OpStateRef '~input-1)
+                                        ;(wizard.circuit.state/getv ~state-var '~input-1)
+                                        )
       :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
-                                            (into
-                                             (gen-zset-for-join ~op ~circuit)
-                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+                                            (reduce z/add-row
+                                                    (gen-zset-for-join ~state-var ~op ~circuit)
+                                                    (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+
       :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id
               (gen-join-body ~state-var ~tx-var ~input-ops ~op))
