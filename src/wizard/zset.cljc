@@ -1,7 +1,7 @@
 (ns wizard.zset
   (:require
    [caudex.dbsp :as dbsp]
-   [wizard.lmdb :as lmdb]
+   [wizard.lmdb.core :as lmdb]
    [org.replikativ.persistent-sorted-set :as sset]))
 
 

@@ -113,11 +113,6 @@
                          (range key-len))]
     `(reduce
       (fn [output# ~delta-row-sym]
-        (when (= '~(dbsp/-get-id op) '~'join-335489)
-         (prn
-          "lookup" ~lookup-key
-          "int" (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key)
-          "other" (wizard.circuit.state/getv ~state-var ~tx-var '~other-id)))
         (into output#
               (reduce
                (fn [new-rows# ~join-row-sym]
@@ -263,10 +258,16 @@
                                          #(g/attr circuit % :arg)
                                          (g/in-edges circuit op)))]))
                        (map (fn get-body [[op input-ops]]
-                              `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
-                       (map (fn [body]
+                              [op `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)]))
+                       (map (fn [[op body]]
                               `(do
-                                 ~body))))
+                                 ~body)
+                              #_`(let [start-t# (System/nanoTime)
+                                     v# ~body
+                                     tim# (/ (double (- (System/nanoTime) start-t#)) 1e6)]
+                                 (when (> tim# 2000)
+                                   (prn '~(dbsp/-get-id op) "took" tim# "ms"))
+                                 v#))))
                       ops-strata)]
     `(fn [~tx-var]
        (as-> ~tx-var ~tx-var

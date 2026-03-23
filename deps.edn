@@ -33,7 +33,11 @@
                                   :main-opts ["-m" "benchmark.datalevin.job"]
                                   :exec-fn   benchmark.datalevin.job/db}
            :datalevin-bench {:extra-paths ["."]
-                             :jvm-opts ["-server"
+                             :jvm-opts ["--add-opens=java.base/java.nio=ALL-UNNAMED"
+                                        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+                                        "--enable-native-access=ALL-UNNAMED"
+                                        "-Dclojure.compiler.direct-linking=true"
+                                        "-server"
                                         "-XX:+UnlockDiagnosticVMOptions"
                                         "-Djdk.attach.allowAttachSelf"
                                         "-XX:+DebugNonSafepoints"

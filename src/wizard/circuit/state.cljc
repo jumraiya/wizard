@@ -1,5 +1,5 @@
 (ns wizard.circuit.state
-  (:require [wizard.lmdb :as l]
+  (:require [wizard.lmdb.core :as l]
             [wizard.zset :as zs]
             [org.replikativ.persistent-sorted-set :as sset]))
 
@@ -10,7 +10,9 @@
   (put [this tx op-id zset] "Saves the zset output by an op-id")
   (add [this tx op-id delta] "Adds the delta to the current value of an op but doesn't save it in storage")
   (slice [this tx op-id lookup-key] "Searches the current zset contained in the given op using a lookup key, used for joins")
-  (commit [this tx] "Saves the current state into storage"))
+  (commit [this tx] "Saves the current state into storage")
+  (set-debug-mode [this mode])
+  (get-op-timings [this]))
 
 (defn- upd [c-state tx]
    (swap! (:state c-state)
@@ -56,7 +58,9 @@
                               :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx] (upd this tx)))
+  (commit [this tx] (upd this tx))
+  (set-debug-mode [_ _])
+  (get-op-timings [_] nil))
 
 
 (defn- lmdb-merge
@@ -81,13 +85,11 @@
       (lmdb-merge base (get-in tx [:deltas op-id]))
       base)))
 
-(defn- lmdb-overwrite-op [ctx op-id data]
-  (let [cur (l/prefix-search ctx [op-id])]
-    (doseq [[c] cur]
-      (l/delete ctx c))
-    (doseq [row data]
-      (let [full-key (into [op-id] (:tuple row))]
-        (l/put ctx full-key (:wt row))))))
+(defn- lmdb-overwrite-op-txn [ctx txn op-id data]
+  (doseq [[c] (l/prefix-search-txn ctx txn [op-id])]
+    (l/delete-txn ctx txn c))
+  (doseq [row data]
+    (l/put-txn ctx txn (into [op-id] (:tuple row)) (:wt row))))
 
 (defrecord LMDBState [ctx]
   CircuitState
@@ -112,40 +114,75 @@
                           (:ref-op-id tx-val)
                           op-id)
               lk (filterv #(not= :* %) lookup-key)
+              start-t (when (contains? ctx :debug)
+                        (System/nanoTime))
               base (into []
                          (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
                          (l/prefix-search ctx (into [prefix-op] lk)))
-              v (if (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
-                  (let [delta-filtered (filter #(every?
-                                                 (fn [[idx e]] (= (nth (:tuple %) idx) e))
-                                                 (map-indexed vector lk))
-                                               (get-in tx [:deltas prefix-op]))]
-                    (lmdb-merge base delta-filtered))
+              deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
+                       (filter #(every?
+                                 (fn [[idx e]] (= (nth (:tuple %) idx) e))
+                                 (map-indexed vector lk))
+                               (get-in tx [:deltas prefix-op])))
+              v (if (seq deltas)
+                  (lmdb-merge base deltas)
                   base)]
-          
-          v
-          ))))
+          (when (contains? ctx :debug)
+            (swap! (:debug ctx) update op-id
+                   (fn [{:keys [ms-max ms-min slice-count-max slice-count-min]}]
+                     (let [cur-ms (/ (double (- (System/nanoTime) start-t)) 1e6)]
+                       {:ms-max (max cur-ms (or ms-max 0))
+                        :min-max (min cur-ms (or ms-min 10000))
+                        :slice-count-max (max (count base) (or slice-count-max 0))
+                        :slice-count-min (min (count base) (or slice-count-min Integer/MAX_VALUE))}))))
+          #_(when (= op-id 'delay-647356)
+              (prn "lookup" lookup-key
+                   "base" base
+                   "deltas" deltas
+                   "v" v))
+          v))))
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [_this tx]
-    (doseq [[op-id data] (filterv #(instance? OpStateRef (val %)) tx)]
-      (let [data (into []
-                       (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
-                       (l/prefix-search ctx [(:ref-op-id data)]))]
-        (lmdb-overwrite-op ctx op-id data)))
-    (doseq [[op-id delta] (:deltas tx)]
-      (doseq [row delta]
-        (let [full-key (into [op-id] (:tuple row))
-              cur-wt   (l/get-val ctx full-key)]
-          (cond
-            (nil? cur-wt)              (l/put ctx full-key (:wt row))
-            (not= cur-wt (:wt row))    (l/delete ctx full-key)))))
-    (doseq [[op-id data] (dissoc tx :deltas)]
-      (when-not (instance? OpStateRef data)
-        (lmdb-overwrite-op ctx op-id data)))
+    #_(doseq [[op-id data] (filterv #(instance? OpStateRef (val %)) tx)]
+        (let [data (into []
+                         (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
+                         (l/prefix-search ctx [(:ref-op-id data)]))]
+          (lmdb-overwrite-op-txn ctx op-id data)))
+    (let [start-t (when (contains? ctx :debug) (System/nanoTime))]
+      (with-open [txn (l/write-txn ctx)]
+        (doseq [[op-id delta] (:deltas tx)]
+          (doseq [row delta]
+            (let [full-key (into [op-id] (:tuple row))
+                  cur-wt   (l/get-val-txn ctx txn full-key)]
+              (cond
+                (nil? cur-wt)           (l/put-txn ctx txn full-key (:wt row))
+                (not= cur-wt (:wt row)) (l/delete-txn ctx txn full-key)))))
+        (.commit txn))
+      (when (contains? ctx :debug)
+        (swap! (:debug ctx) update :commit
+               (fn [{:keys [ms-max ms-min commit-count-max commit-count-min]}]
+                 (let [cur-ms (/ (double (- (System/nanoTime) start-t)) 1e6)
+                       commit-count (reduce #(+ %1 (-> %2 val count)) 0 (:deltas tx))]
+                   (prn "commit took" cur-ms)
+                   {:ms-max (max cur-ms (or ms-max 0))
+                    :min-max (min cur-ms (or ms-min 10000))
+                    :commit-count-max (max commit-count
+                                           (or commit-count-max 0))
+                    :commit-count-min (min commit-count
+                                           (or commit-count-min Integer/MAX_VALUE))})))))
+    #_(doseq [[op-id data] (dissoc tx :deltas)]
+        (when (and (not (instance? OpStateRef data))
+                   (symbol? op-id))
+          (lmdb-overwrite-op-txn ctx op-id data)))
     ;(l/get-val ctx ['root-110316])
     ))
 
-(defn lmdb-state [dir circuit-name]
-  (->LMDBState
-   (l/open-db dir circuit-name)))
+(defn lmdb-state
+  ([dir circuit-name]
+   (lmdb-state dir circuit-name false))
+  ([dir circuit-name debug?]
+   (->LMDBState
+    (cond->
+     (l/open-db dir circuit-name)
+      debug? (assoc :debug (atom {}))))))
