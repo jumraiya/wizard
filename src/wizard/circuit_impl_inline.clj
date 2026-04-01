@@ -6,7 +6,6 @@
             [clojure.edn :as edn]
             [wizard.circuit.state :as c.state]
             [wizard.zset :as z]
-            [criterium.core :as cr]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 
@@ -126,7 +125,7 @@
       (wizard.circuit.state/getv ~state-var ~tx-var '~other-id))))
 
 
-(defmacro gen-zset-for-join [state-var op circuit]
+(defmacro gen-zset-for-join [op circuit]
   (if-let [join-output (or
                         (first
                          (into []
@@ -234,7 +233,7 @@
                                         )
       :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
                                             (reduce z/add-row
-                                                    (gen-zset-for-join ~state-var ~op ~circuit)
+                                                    (gen-zset-for-join ~op ~circuit)
                                                     (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
 
       :join `(wizard.circuit.state/put
@@ -258,16 +257,10 @@
                                          #(g/attr circuit % :arg)
                                          (g/in-edges circuit op)))]))
                        (map (fn get-body [[op input-ops]]
-                              [op `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)]))
-                       (map (fn [[op body]]
+                              `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
+                       (map (fn [body]
                               `(do
-                                 ~body)
-                              #_`(let [start-t# (System/nanoTime)
-                                     v# ~body
-                                     tim# (/ (double (- (System/nanoTime) start-t#)) 1e6)]
-                                 (when (> tim# 2000)
-                                   (prn '~(dbsp/-get-id op) "took" tim# "ms"))
-                                 v#))))
+                                 ~body))))
                       ops-strata)]
     `(fn [~tx-var]
        (as-> ~tx-var ~tx-var

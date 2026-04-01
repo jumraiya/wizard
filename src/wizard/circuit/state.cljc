@@ -37,33 +37,7 @@
 
 (defrecord OpStateRef [ref-op-id])
 
-(defrecord AtomCircuitState [^clojure.lang.Atom state]
-  CircuitState
-  (init-tx [_] {})
-  (getv [this op-id]
-    (clojure.core/get @(:state this) op-id))
-  (getv [this tx op-id]
-    (or
-     (clojure.core/get tx op-id)
-     (cond-> (clojure.core/get @(:state this) op-id)
-       (contains? (:deltas tx) op-id)
-       (zs/add-zset (get-in tx [:deltas op-id])))))
-  (slice [this tx op-id lookup-key]
-    (let [op-id (if (instance? OpStateRef (get tx op-id))
-                  (:ref-op-id (get tx op-id))
-                  op-id)]
-     (atom-slice this tx op-id lookup-key)))
-  (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
-                           #?(:cljs (js/Error. "Trying to reset a delta state!")
-                              :clj (throw (Exception. "Trying to reset a delta state!")))
-                           (assoc tx op-id zset)))
-  (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx] (upd this tx))
-  (set-debug-mode [_ _])
-  (get-op-timings [_] nil))
-
-
-(defn- lmdb-merge
+(defn- merge-delta
   "Merge a base seq of ZSetVecEntry with a delta, applying cancellation."
   [base delta]
   (let [base-map (into {} (map (fn [r] [(:tuple r) (:wt r)])) base)
@@ -77,12 +51,48 @@
     (mapv (fn [[t w]] (zs/->ZSetVecEntry t w)) merged)))
 
 
+(defrecord AtomCircuitState [^clojure.lang.Atom state]
+  CircuitState
+  (init-tx [_] {})
+  (getv [this op-id]
+    (clojure.core/get @(:state this) op-id))
+  (getv [this tx op-id]
+    (or
+     (clojure.core/get tx op-id)
+     (cond-> (clojure.core/get @(:state this) op-id)
+       (contains? (:deltas tx) op-id)
+       (zs/add-zset (get-in tx [:deltas op-id])))))
+  (slice [this tx op-id lookup-key]
+    (let [op-id' (if (instance? OpStateRef (get tx op-id))
+                   (:ref-op-id (get tx op-id))
+                   op-id)
+          base (atom-slice this tx op-id' lookup-key)
+          lk (filterv #(not= :* %) lookup-key)
+          deltas (when (and (contains? (:deltas tx) op-id') (= op-id op-id))
+                   (filter #(every?
+                             (fn [[idx e]] (= (nth (:tuple %) idx) e))
+                             (map-indexed vector lk))
+                           (get-in tx [:deltas op-id'])))]
+      (if (seq deltas)
+        (merge-delta base deltas)
+        base)))
+  (put [_ tx op-id zset] (if (contains? (:deltas tx) op-id)
+                           #?(:cljs (js/Error. "Trying to reset a delta state!")
+                              :clj (throw (Exception. "Trying to reset a delta state!")))
+                           (assoc tx op-id zset)))
+  (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
+  (commit [this tx] (upd this tx))
+  (set-debug-mode [_ _])
+  (get-op-timings [_] nil))
+
+
+
 (defn- lmdb-get [ctx tx op-id]
   (let [base (into (sset/sorted-set)
                    (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
                    (l/prefix-search ctx [op-id]))]
     (if (contains? (:deltas tx) op-id)
-      (lmdb-merge base (get-in tx [:deltas op-id]))
+      (merge-delta base (get-in tx [:deltas op-id]))
       base)))
 
 (defn- lmdb-overwrite-op-txn [ctx txn op-id data]
@@ -125,7 +135,7 @@
                                  (map-indexed vector lk))
                                (get-in tx [:deltas prefix-op])))
               v (if (seq deltas)
-                  (lmdb-merge base deltas)
+                  (merge-delta base deltas)
                   base)]
           (when (contains? ctx :debug)
             (swap! (:debug ctx) update op-id
@@ -135,11 +145,6 @@
                         :min-max (min cur-ms (or ms-min 10000))
                         :slice-count-max (max (count base) (or slice-count-max 0))
                         :slice-count-min (min (count base) (or slice-count-min Integer/MAX_VALUE))}))))
-          #_(when (= op-id 'delay-647356)
-              (prn "lookup" lookup-key
-                   "base" base
-                   "deltas" deltas
-                   "v" v))
           v))))
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
@@ -164,7 +169,6 @@
                (fn [{:keys [ms-max ms-min commit-count-max commit-count-min]}]
                  (let [cur-ms (/ (double (- (System/nanoTime) start-t)) 1e6)
                        commit-count (reduce #(+ %1 (-> %2 val count)) 0 (:deltas tx))]
-                   (prn "commit took" cur-ms)
                    {:ms-max (max cur-ms (or ms-max 0))
                     :min-max (min cur-ms (or ms-min 10000))
                     :commit-count-max (max commit-count
