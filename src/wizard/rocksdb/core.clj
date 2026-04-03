@@ -72,8 +72,12 @@
   (put db ['integrate-232 :asd "232" 221.21] [true])
   (put db ['integrate-232 :asd "afasc" 43232] [true])
   (put db ['integrate-232 :vdsdv "bffb" 3432.22] [false])
+
+  (batch-update db {:puts [[['integrate-232 :asd "232" 221.21] [true]]
+                           [['integrate-232 :asd "afasc" 43232] [true]]
+                           [['integrate-232 :vdsdv "bffb" 3432.22] [false]]]})
+
   (prefix-slice db ['integrate-232 :asd])
   (prefix-slice-2 "/tmp/rocksdb" ['integrate-232 :asd])
-  
-  (getv db ['integrate-232 :asd "232" 221.21])
-  )
+
+  (getv db ['integrate-232 :asd "232" 221.21]))

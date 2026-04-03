@@ -221,7 +221,7 @@
   [dir ^String db-name]
   (let [env (-> (Env/create)
                 (.setMapSize 10485760000)
-                (.setMaxDbs 20)
+                (.setMaxDbs 1)
                 (.open (File. ^String (str dir)) (make-array EnvFlags 0)))
         db  (.openDbi env db-name (into-array DbiFlags [DbiFlags/MDB_CREATE]))]
     {:env env :db db}))
@@ -262,16 +262,16 @@
         key-buf      (->direct-buf prefix-bytes)]
     (with-open [cursor (.openCursor db txn)]
       (if (.get cursor key-buf GetOp/MDB_SET_RANGE)
-        (loop [results []]
+        (loop [results (transient [])]
           (let [k-bs (buf->bytes (.key cursor))]
             (if (and (>= (alength k-bs) (alength prefix-bytes))
                      (Arrays/equals prefix-bytes 0 (alength prefix-bytes)
                                     k-bs         0 (alength prefix-bytes)))
               (let [entry [(decode k-bs) (first (decode (buf->bytes (.val cursor))))]]
                 (if (.seek cursor SeekOp/MDB_NEXT)
-                  (recur (conj results entry))
-                  (conj results entry)))
-              results)))
+                  (recur (conj! results entry))
+                  (persistent! (conj! results entry))))
+              (persistent! results))))
         []))))
 
 ;; ---- Single-operation convenience functions ----
@@ -303,3 +303,21 @@
   (with-open [^Txn txn (.txnWrite env)]
     (delete-txn ctx txn key-vec)
     (.commit txn)))
+
+(defn get-all [{:keys [env db]}]
+  (with-open [^Txn txn (.txnRead env)
+              ^org.lmdbjava.CursorIterable cursor (.iterate db txn)]
+    (let [it (.iterator cursor)
+          results (transient [])]
+      (while (.hasNext it)
+        (let [entry (.next it)
+              tupl (.key entry)
+              wt (.val entry)]
+          (conj! results [(decode (buf->bytes tupl)) (first (decode (buf->bytes wt)))])))
+      (persistent! results))))
+
+(comment
+  (def db (open-db "/tmp/bench-test" "test"))
+  (put db [:asds "cdsdd" 2321] false)
+  (prefix-search db [])
+  (get-all db))
