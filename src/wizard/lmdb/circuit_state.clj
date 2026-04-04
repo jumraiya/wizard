@@ -24,7 +24,7 @@
   (doseq [row data]
     (l/put-txn (get ctx op-id) txn (:tuple row) (:wt row))))
 
-(defrecord LMDBState [ctx]
+(defrecord LMDBState [ctx opts]
   st/CircuitState
   (init-tx [_] {})
   (getv [_this op-id]
@@ -84,10 +84,12 @@
                        (let [op-ctx (get ctx op-id)]
                          (with-open [txn (l/write-txn op-ctx)]
                            (doseq [row delta]
-                             (let [cur-wt (l/get-val-txn op-ctx txn (:tuple row))]
-                               (cond
-                                 (nil? cur-wt) (l/put-txn op-ctx txn (:tuple row) (:wt row))
-                                 (not= cur-wt (:wt row)) (l/delete-txn op-ctx txn (:tuple row)))))
+                             (if (:initializing? opts)
+                               (l/put-txn op-ctx txn (:tuple row) (:wt row))
+                               (let [cur-wt (l/get-val-txn op-ctx txn (:tuple row))]
+                                 (cond
+                                   (nil? cur-wt) (l/put-txn op-ctx txn (:tuple row) (:wt row))
+                                   (not= cur-wt (:wt row)) (l/delete-txn op-ctx txn (:tuple row))))))
                            (.commit txn)))))
                    (:deltas tx))]
       (run! deref commits)
@@ -125,7 +127,7 @@
                              [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rwxr-x---"))]))
                            [id (l/open-db abs-path (name id))])))
                   (g/nodes circuit))]
-    (->LMDBState dbs)))
+    (->LMDBState dbs opts)))
 
 (comment
   (def circ (caudex.circuit/build-circuit '[:find ?a ?b

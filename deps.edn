@@ -21,6 +21,7 @@
                               com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}
                               criterium/criterium {:mvn/version "0.4.6"}}
                  :jvm-opts ["-Djdk.attach.allowAttachSelf"]}
+           :compile-circuits {:main-opts ["-m" "wizard.compile"]}
 
            :test {:extra-paths ["test"]
                   :jvm-opts ["--add-opens=java.base/java.nio=ALL-UNNAMED"
