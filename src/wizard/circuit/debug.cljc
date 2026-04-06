@@ -6,6 +6,7 @@
    #?(:clj [clojure.data.json :as json])
    [caudex.graph :as g]
    [wizard.circuit.state :as state]
+   [wizard.rocksdb.circuit-state :as r.state]
    [wizard.circuit-impl-inline :as impl-inline]
    [caudex.utils :as utils]
    [wizard.zset :as zs]
@@ -169,7 +170,7 @@
         caudex-impl (c.impl/reify-circuit circuit)
         inline-impl (impl-inline/reify-circuit circuit)
         inline-state (atom {})
-        c-state (state/lmdb-state "/tmp/bench-test" "test")
+        c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
                                         ;(state/->AtomCircuitState inline-state)
         ]
     (compare-states circuit c-state caudex-impl inline-impl transactions))

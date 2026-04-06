@@ -74,7 +74,7 @@
 
 ;; ---- Encode / decode a single value ----
 
-(defn- encode-val ^bytes [v]
+(defn encode-val ^bytes [v]
   (cond
     (boolean? v)
     (byte-array [type-boolean (if v val-true val-false)])

@@ -10,22 +10,21 @@
   (add [this tx op-id delta] "Adds the delta to the current value of an op but doesn't save it in storage")
   (slice [this tx op-id lookup-key] "Searches the current zset contained in the given op using a lookup key, used for joins")
   (commit [this tx] "Saves the current state into storage")
-  (set-debug-mode [this mode])
-  (get-op-timings [this]))
+  (get-view [this]))
 
-(defn- upd [c-state tx]
-   (swap! (:state c-state)
-          (fn [state]
-            (reduce
-             (fn [state [k v]]
-               (if (= k :deltas)
-                 (reduce
-                  #(assoc %1 (key %2) (getv c-state tx (key %2))) 
-                  state
-                  v)
-                 (assoc state k (getv c-state tx k))))
-             state
-             tx))))
+ (defn- upd [c-state tx]
+  (swap! (:state c-state)
+         (fn [state]
+           (reduce
+            (fn [state [k v]]
+              (if (= k :deltas)
+                (reduce
+                 #(assoc %1 (key %2) (getv c-state tx (key %2))) 
+                 state
+                 v)
+                (assoc state k (getv c-state tx k))))
+            state
+            tx))))
 
 (defn- atom-slice [state tx op-id lookup-key]
   (let [entry (zs/->ZSetVecEntry (vec (butlast lookup-key)) (last lookup-key))]
@@ -80,8 +79,6 @@
                               :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx] (upd this tx))
-  (set-debug-mode [_ _])
-  (get-op-timings [_] nil))
+  (commit [this tx] (upd this tx)))
 
 

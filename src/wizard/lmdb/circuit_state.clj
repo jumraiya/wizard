@@ -20,7 +20,7 @@
 
 (defn- lmdb-overwrite-op-txn [ctx txn op-id data]
   (doseq [[c] (l/get-all (get ctx op-id))]
-    (l/delete-txn ctx txn c))
+    (l/delete-txn (get ctx op-id) txn c))
   (doseq [row data]
     (l/put-txn (get ctx op-id) txn (:tuple row) (:wt row))))
 
@@ -72,12 +72,13 @@
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [_this tx]
-    #_(doseq [[op-id data] (filterv #(instance? OpStateRef (val %)) tx)]
+    (when (:debug opts)
+      (doseq [[op-id data] (filterv #(instance? OpStateRef (val %)) tx)]
         (let [data (into []
                          (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
                          (l/prefix-search ctx [(:ref-op-id data)]))]
-          (lmdb-overwrite-op-txn ctx op-id data)))
-    (let [start-t (when (contains? ctx :debug) (System/nanoTime))
+          (lmdb-overwrite-op-txn ctx op-id data))))
+    (let [start-t (when (:debug opts) (System/nanoTime))
           commits (mapv
                    (fn [[op-id delta]]
                      (future
@@ -104,12 +105,11 @@
                                            (or commit-count-max 0))
                     :commit-count-min (min commit-count
                                            (or commit-count-min Integer/MAX_VALUE))})))))
-    #_(doseq [[op-id data] (dissoc tx :deltas)]
-        (when (and (not (instance? OpStateRef data))
-                   (symbol? op-id))
-          (lmdb-overwrite-op-txn ctx op-id data)))
-    ;(l/get-val ctx ['root-110316])
-    ))
+    (when (:debug opts)
+     (doseq [[op-id data] (dissoc tx :deltas)]
+       (when (and (not (instance? OpStateRef data))
+                  (symbol? op-id))
+         (lmdb-overwrite-op-txn ctx op-id data))))))
 
 (defn lmdb-state
   [dir circuit & [opts]]

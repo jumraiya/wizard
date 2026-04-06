@@ -1,13 +1,12 @@
-(ns wizard.lmdb.circuit-test
+(ns wizard.rocksdb.circuit-test
   (:require [clojure.test :refer [deftest is]]
             [matcher-combinators.test]
             [wizard.circuit-impl-inline-async :as impl]
             [caudex.circuit :as c]
             [matcher-combinators.matchers :as m]
-            [wizard.lmdb.circuit-state :as c.state])
+            [wizard.rocksdb.circuit-state :as c.state])
   (:import (java.nio.file Files)
            (java.io File)))
-;(ns-unalias 'wizard.lmdb.circuit-test 'impl)
 
 (defn- temp-dir ^File []
   (let [f (.toFile (Files/createTempDirectory "lmdb-circuit-test" (make-array java.nio.file.attribute.FileAttribute 0)))]
@@ -15,8 +14,7 @@
     (.getAbsolutePath f)))
 
 (defn- make-state [circuit]
-  (c.state/lmdb-state (temp-dir) circuit))
-
+  (c.state/rocksdb-state (temp-dir) circuit))
 
 (deftest simple-select-lmdb
   (let [ccircuit (c/build-circuit '[:find ?a ?b
