@@ -60,11 +60,13 @@
                           (reduce
                            (fn [batch row]
                              (let [cur-wt (rocksdb/getv ctx (:tuple row) op-id)]
-                               (cond
-                                 (nil? cur-wt)
+                               (if (:initializing? opts)
                                  (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
-                                 (not= cur-wt (:wt row))
-                                 (update-in batch [op-id :dels] #(conj (or % []) (:tuple row))))))
+                                 (cond
+                                   (nil? cur-wt)
+                                   (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
+                                   (not= cur-wt (:wt row))
+                                   (update-in batch [op-id :dels] #(conj (or % []) (:tuple row)))))))
                            batch
                            delta))
                         {}

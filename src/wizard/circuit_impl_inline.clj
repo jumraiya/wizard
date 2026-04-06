@@ -263,8 +263,16 @@
           (recur (rest remaining) (conj result [:seq (first remaining)])))))))
 
 (defmacro gen-strata-fn [circuit ops-strata state-var tx-var cljs?]
-  (if cljs?
-    (let [x-forms (into []
+  (let [op-data (into []
+                      (map (fn [op]
+                             [op (into []
+                                       (map :src)
+                                       (sort-by #(g/attr circuit % :arg)
+                                                (g/in-edges circuit op)))]))
+                      ops-strata)
+        groups   (group-consecutive-joins op-data)
+        x-forms (if cljs?
+                  (into []
                         (comp
                          (map (fn get-inputs [op]
                                 [op (into []
@@ -277,44 +285,33 @@
                          (map (fn [body]
                                 `(do
                                    ~body))))
-                        ops-strata)]
-      `(fn [~tx-var]
-         (as-> ~tx-var ~tx-var
-           ~@x-forms)))
-    (let [op-data (into []
-                        (map (fn [op]
-                               [op (into []
-                                         (map :src)
-                                         (sort-by #(g/attr circuit % :arg)
-                                                  (g/in-edges circuit op)))]))
                         ops-strata)
-          groups   (group-consecutive-joins op-data)
-          x-forms  (into []
-                         (map (fn [[kind data]]
-                                (if (= kind :seq)
-                                  (let [[op input-ops] data]
-                                    `(do (gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
-                                        ;; :par — consecutive joins; run them in parallel when >1
-                                  (if (= 1 (count data))
-                                    (let [[op input-ops] (first data)]
-                                      `(do (gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
-                                    (let [entries      (mapv (fn [[op input-ops]]
-                                                               {:op-id  (dbsp/-get-id op)
-                                                                :f-sym  (gensym "join-f")
-                                                                :body   `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)})
-                                                             data)
-                                          let-bindings (into [] (mapcat (fn [{:keys [f-sym body]}]
-                                                                          [f-sym `(future ~body)]))
-                                                             entries)
-                                          merge-keys   (mapv (fn [{:keys [f-sym op-id]}]
-                                                               `(select-keys (deref ~f-sym) ['~op-id]))
-                                                             entries)]
-                                      `(let [~@let-bindings]
-                                         (merge ~tx-var ~@merge-keys)))))))
-                         groups)]
-      `(fn [~tx-var]
-         (as-> ~tx-var ~tx-var
-           ~@x-forms)))))
+                  (into []
+                        (map (fn [[kind data]]
+                               (if (= kind :seq)
+                                 (let [[op input-ops] data]
+                                   `(do (gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
+                                ;; :par — consecutive joins; run them in parallel when >1
+                                 (if (= 1 (count data))
+                                   (let [[op input-ops] (first data)]
+                                     `(do (gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)))
+                                   (let [entries      (mapv (fn [[op input-ops]]
+                                                              {:op-id  (dbsp/-get-id op)
+                                                               :f-sym  (gensym "join-f")
+                                                               :body   `(gen-op-body ~circuit ~op ~input-ops ~state-var ~tx-var ~cljs?)})
+                                                            data)
+                                         let-bindings (into [] (mapcat (fn [{:keys [f-sym body]}]
+                                                                         [f-sym `(future ~body)]))
+                                                            entries)
+                                         merge-keys   (mapv (fn [{:keys [f-sym op-id]}]
+                                                              `(select-keys (deref ~f-sym) ['~op-id]))
+                                                            entries)]
+                                     `(let [~@let-bindings]
+                                        (merge ~tx-var ~@merge-keys)))))))
+                        groups))]
+    `(fn [~tx-var]
+       (as-> ~tx-var ~tx-var
+         ~@x-forms))))
 
 (defmacro reify-circuit
   ([circuit]

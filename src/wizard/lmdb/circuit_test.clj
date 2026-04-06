@@ -1,7 +1,7 @@
 (ns wizard.lmdb.circuit-test
   (:require [clojure.test :refer [deftest is]]
             [matcher-combinators.test]
-            [wizard.circuit-impl-inline-async :as impl]
+            [wizard.circuit-impl-inline :as impl]
             [caudex.circuit :as c]
             [matcher-combinators.matchers :as m]
             [wizard.lmdb.circuit-state :as c.state])
