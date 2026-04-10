@@ -6,7 +6,8 @@
             [caudex.dbsp :as dbsp]
             [org.replikativ.persistent-sorted-set :as sset]
             [wizard.rocksdb.core :as rocksdb])
-  (:import [wizard.circuit.state OpStateRef]))
+  (:import [wizard.circuit.state OpStateRef]
+           [org.rocksdb BlockBasedTableConfig ColumnFamilyOptions LRUCache]))
 
 
 (defn- get-op-state [ctx tx op-id]
@@ -55,23 +56,24 @@
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [_this tx]
-    (let [batch-update (reduce
-                        (fn [batch [op-id delta]]
-                          (reduce
-                           (fn [batch row]
-                             (let [cur-wt (rocksdb/getv ctx (:tuple row) op-id)]
-                               (if (:initializing? opts)
-                                 (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
-                                 (cond
-                                   (nil? cur-wt)
-                                   (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
-                                   (not= cur-wt (:wt row))
-                                   (update-in batch [op-id :dels] #(conj (or % []) (:tuple row)))))))
-                           batch
-                           delta))
-                        {}
-                        (:deltas tx))
-          batch-update (if (:debug? opts)
+    (let [commits (mapv
+                   (fn [[op-id delta]]
+                     (future
+                       (let [upd (reduce
+                                  (fn [batch row]
+                                    (let [cur-wt (rocksdb/getv ctx (:tuple row) op-id)]
+                                      (if (:initializing? opts)
+                                        (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
+                                        (cond
+                                          (nil? cur-wt)
+                                          (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
+                                          (not= cur-wt (:wt row))
+                                          (update-in batch [op-id :dels] #(conj (or % []) (:tuple row)))))))
+                                  {op-id {:puts [] :dels []}}
+                                  delta)]
+                         (rocksdb/batch-update-cols ctx upd))))
+                   (:deltas tx))
+          batch-update (when (:debug? opts)
                          (reduce
                           (fn [b [op-id data]]
                             (if (and (contains? (:col-handles ctx) (name op-id))
@@ -94,10 +96,11 @@
                                  (assoc-in b [op-id :puts] new)
                                  old))
                               b))
-                          batch-update
-                          tx)
-                         batch-update)]
-      (rocksdb/batch-update-cols ctx batch-update))))
+                          {}
+                          tx))]
+      (run! deref commits)
+      (when batch-update
+        (rocksdb/batch-update-cols ctx batch-update)))))
 
 (defn rocksdb-state [dir circuit & [opts]]
   (let [cols (into []
@@ -108,5 +111,19 @@
                              true
                              (= :integrate (dbsp/-get-op-type %)))))
                     (map #(hash-map :col-name (dbsp/-get-id %))))
-                   (g/nodes circuit))]
-    (->RocksDBState (rocksdb/open-db dir {:col-families cols}) opts)))
+                   (g/nodes circuit))
+        ;block-cache (LRUCache. (* 2 1024 1024 1024))
+        table-conf (when (:initializing? opts)
+                     (doto (BlockBasedTableConfig.)
+                                        ;(.setBlockCache block-cache)
+                       (.setBlockSize (* 32 1024))
+                       (.setCacheIndexAndFilterBlocks true)
+                       (.setCacheIndexAndFilterBlocksWithHighPriority true)
+                       (.setPinL0FilterAndIndexBlocksInCache true)))
+        col-options (when (:initializing? opts)
+                      (doto (ColumnFamilyOptions.)
+                        (.setWriteBufferSize (* 1024 1024 1024))
+                        (.setMaxWriteBufferNumber 4)
+                        (.setMinWriteBufferNumberToMerge 2)
+                        (.setTableFormatConfig table-conf)))]
+    (->RocksDBState (rocksdb/open-db dir (cond-> {:col-families cols} col-options (assoc :col-options col-options))) opts)))

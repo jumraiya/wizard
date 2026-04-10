@@ -10,13 +10,14 @@
 (defn open-db
   ([dir]
    (open-db dir {}))
-  ([dir {:keys [col-families]}]
-   (let [ ;; table-options (doto (BlockBasedTableConfig.)
+  ([dir {:keys [col-families col-options]}]
+   (let [;; table-options (doto (BlockBasedTableConfig.)
          ;;                 (.setFilterPolicy (BloomFilter. 10)))
          opts (doto (Options.)
                 (.setCreateIfMissing true)
                 (.setCreateMissingColumnFamilies true)
                 (.setMaxBackgroundJobs 10)
+                ;; (.setDbWriteBufferSize (* 1024 1024 1024 10))
                                         ;(.setTableFormatConfig table-options)
                                         ;(.useCappedPrefixExtractor prefix-len)
                 )
@@ -27,7 +28,7 @@
                                      (into
                                       [(ColumnFamilyDescriptor.
                                         RocksDB/DEFAULT_COLUMN_FAMILY
-                                        (ColumnFamilyOptions.))]
+                                        (or col-options (ColumnFamilyOptions.)))]
                                       (mapv #(ColumnFamilyDescriptor.
                                               (.getBytes (name (:col-name %)))
                                               (ColumnFamilyOptions.))
@@ -71,7 +72,7 @@
       (doseq [k dels]
         (.delete batch (-> ctx :col-handles (get (name col)))
                  (codec/encode k))))
-    (.write (:db ctx) (or opts (WriteOptions.)) batch)))
+    (.write (:db ctx) (or opts (doto (WriteOptions.) (.disableWAL))) batch)))
 
 ;; static Slice prefixUpperBound(byte[] prefix) {
 ;;     byte[] upper = prefix.clone();
