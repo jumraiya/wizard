@@ -75,8 +75,8 @@
 (defn mk-comparator [indices]
   (let [cmp (fn [row-1 row-2]
               (loop [idx (first indices) indices (rest indices)]
-                (let [val-1 (nth row-1 idx)
-                      val-2 (nth row-2 idx)
+                (let [val-1 (nth (:tuple row-1) idx)
+                      val-2 (nth (:tuple row-2) idx)
                       r (if (or (= val-1 :*) (= val-2 :*))
                           0
                           (if (= (type val-1) (type val-2))
@@ -103,12 +103,13 @@
   `(let [t1#    (:tuple ~row-1-sym)
          val-1# (if (< ~idx (count t1#)) (nth t1# ~idx) (:wt ~row-1-sym))
          t2#    (:tuple ~row-2-sym)
-         val-2# (if (< ~idx (count t2#)) (nth t2# ~idx) (:wt ~row-2-sym))]
-     (if (or (= val-1# :*) (= val-2# :*))
-       0
-       (if (= (type val-1#) (type val-2#))
-         (compare val-1# val-2#)
-         (compare (str val-1#) (str val-2#))))))
+         val-2# (if (< ~idx (count t2#)) (nth t2# ~idx) (:wt ~row-2-sym))
+         res# (if (or (= val-1# :*) (= val-2# :*))
+                0
+                (if (= (type val-1#) (type val-2#))
+                  (compare val-1# val-2#)
+                  (compare (str val-1#) (str val-2#))))]
+     res#))
 
 (defmacro compare-row [cur-idx remaining row-1-sym row-2-sym]
   `(let [res# (compare-index ~cur-idx ~row-1-sym ~row-2-sym)]
@@ -123,7 +124,13 @@
         row-2-sym (gensym)
         x-forms `(compare-row ~(first indices) ~(rest indices) ~row-1-sym ~row-2-sym)]
     `(fn [~row-1-sym ~row-2-sym]
-       ~x-forms)))
+       (let [~row-1-sym (if (vector? ~row-1-sym)
+                      (->ZSetVecEntry ~row-1-sym true)
+                      ~row-1-sym)
+             ~row-2-sym (if (vector? ~row-2-sym)
+                          (->ZSetVecEntry ~row-2-sym true)
+                          ~row-2-sym)]
+         ~x-forms))))
 
 (defmacro gen-op-zset [op]
   (let [op (if (record? op)

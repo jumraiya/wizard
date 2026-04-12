@@ -46,10 +46,8 @@
                          (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
                          (rocksdb/prefix-slice ctx lk prefix-op))
               deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
-                       (filter #(every?
-                                 (fn [[idx e]] (= (nth (:tuple %) idx) e))
-                                 (map-indexed vector lk))
-                               (get-in tx [:deltas prefix-op])))]
+                       (sset/slice (get-in tx [:deltas prefix-op])
+                                   lookup-key lookup-key))]
           (if (seq deltas)
             (st/merge-delta base deltas)
             base)))))

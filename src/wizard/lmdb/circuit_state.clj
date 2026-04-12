@@ -26,7 +26,7 @@
 
 (defrecord LMDBState [ctx opts]
   st/CircuitState
-  (init-tx [_] {})
+  (init-tx [_] (reset! (:io-time opts) 0) {})
   (getv [_this op-id]
     (into []
           (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
@@ -47,16 +47,16 @@
                           (:ref-op-id tx-val)
                           op-id)
               lk (filterv #(not= :* %) lookup-key)
-              start-t (when (contains? ctx :debug)
+              start-t (when (:time-io? opts)
                         (System/nanoTime))
               base (into []
                          (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
                          (l/prefix-search (get ctx prefix-op) lk))
+              _ (when (:time-io? opts)
+                  (swap! (:io-time opts) + (/ (double (- (System/nanoTime) start-t)) 1e6)))
               deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
-                       (filter #(every?
-                                 (fn [[idx e]] (= (nth (:tuple %) idx) e))
-                                 (map-indexed vector lk))
-                               (get-in tx [:deltas prefix-op])))
+                       (sset/slice (get-in tx [:deltas prefix-op])
+                                   lookup-key lookup-key))
               v (if (seq deltas)
                   (st/merge-delta base deltas)
                   base)]
@@ -72,13 +72,13 @@
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [_this tx]
-    (when (:debug opts)
+    (when (:debug? opts)
       (doseq [[op-id data] (filterv #(instance? OpStateRef (val %)) tx)]
         (let [data (into []
                          (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
                          (l/prefix-search ctx [(:ref-op-id data)]))]
           (lmdb-overwrite-op-txn ctx op-id data))))
-    (let [start-t (when (:debug opts) (System/nanoTime))
+    (let [start-t (when (:time-io? opts) (System/nanoTime))
           commits (mapv
                    (fn [[op-id delta]]
                      (future
@@ -94,22 +94,14 @@
                            (.commit txn)))))
                    (:deltas tx))]
       (run! deref commits)
-      (when (contains? ctx :debug)
-        (swap! (:debug ctx) update :commit
-               (fn [{:keys [ms-max ms-min commit-count-max commit-count-min]}]
-                 (let [cur-ms (/ (double (- (System/nanoTime) start-t)) 1e6)
-                       commit-count (reduce #(+ %1 (-> %2 val count)) 0 (:deltas tx))]
-                   {:ms-max (max cur-ms (or ms-max 0))
-                    :min-max (min cur-ms (or ms-min 10000))
-                    :commit-count-max (max commit-count
-                                           (or commit-count-max 0))
-                    :commit-count-min (min commit-count
-                                           (or commit-count-min Integer/MAX_VALUE))})))))
-    (when (:debug opts)
-     (doseq [[op-id data] (dissoc tx :deltas)]
-       (when (and (not (instance? OpStateRef data))
-                  (symbol? op-id))
-         (lmdb-overwrite-op-txn ctx op-id data))))))
+      (when (:time-io? opts)
+        (prn "io took" (+ @(:io-time opts)
+                          (/ (double (- (System/nanoTime) start-t)) 1e6)) "ms")))
+    (when (:debug? opts)
+      (doseq [[op-id data] (dissoc tx :deltas)]
+        (when (and (not (instance? OpStateRef data))
+                   (symbol? op-id))
+          (lmdb-overwrite-op-txn ctx op-id data))))))
 
 (defn lmdb-state
   [dir circuit & [opts]]
@@ -127,7 +119,7 @@
                              [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rwxr-x---"))]))
                            [id (l/open-db abs-path (name id))])))
                   (g/nodes circuit))]
-    (->LMDBState dbs opts)))
+    (->LMDBState dbs (assoc opts :io-time (atom 0)))))
 
 (comment
   (def circ (caudex.circuit/build-circuit '[:find ?a ?b

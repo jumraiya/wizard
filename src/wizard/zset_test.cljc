@@ -28,16 +28,16 @@
            (z/add-zsets set-1 (into (init-fn) [[:a "123" true]]))))))
 
 (deftest lookup-zset
-  (let [vars-1 '[?a ?b ?c]
-        vars-2 '[?p ?b ?r]
-        init-fn (z/mk-zset-init-fn-for-join vars-1 vars-2)
-        zset (into (init-fn) [[23 "asd" :ed true]
-                              [21 "efw" :asd true]
-                              [54 "asd" :ded false]])
-        zset-2 (into (init-fn) [[21 "efw" :asd true]
-                                [23 "asd" :ed true]])
-        lookup-key [:* "asd" :* :*]]
-    (is (= [[23 "asd" :ed true] [54 "asd" :ded false]]
+  (let [init-zset (z/gen-zset-init-body-for-join [?a ?b ?c] [?p ?b ?r])
+        ;(z/mk-zset-init-fn-for-join vars-1 vars-2)
+        zset (into init-zset [(z/->ZSetVecEntry [23 "asd" :ed] true)
+                              (z/->ZSetVecEntry [21 "efw" :asd] true)
+                              (z/->ZSetVecEntry [54 "asd" :ded] false)])
+        zset-2 (into init-zset [(z/->ZSetVecEntry [21 "efw" :asd] true)
+                                (z/->ZSetVecEntry [23 "asd" :ed] true)])
+        lookup-key [:* "asd" :* :* :*]]
+    (is (= [(z/->ZSetVecEntry [23 "asd" :ed] true)
+            (z/->ZSetVecEntry [54 "asd" :ded] false)]
            (vec (sset/slice zset lookup-key lookup-key))))
-    (is (= [[23 "asd" :ed true]]
-         (vec (sset/slice zset-2 lookup-key lookup-key))))))
+    (is (= [(z/->ZSetVecEntry [23 "asd" :ed] true)]
+           (vec (sset/slice zset-2 lookup-key lookup-key))))))

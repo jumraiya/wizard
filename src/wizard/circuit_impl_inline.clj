@@ -189,18 +189,20 @@
                   ~state-var
                   ~tx-var
                   '~op-id
-                  (reduce
-                   (fn [zset# row#]
-                     (z/add-row zset# row#)
-                     ;(z/add-zset-row zset# row#)
-                     )
-                   (z/gen-op-zset ~op)
-                   (eduction
-                    (filter (fn [~row-sym]
-                              (and ~@filter-body)))
-                    (map (fn [~row-sym]
-                           ~proj))
-                    (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))))
+                  (persistent!
+                   (reduce
+                    (fn [ss# row#]
+                      (let [cur# (z/at ss# (z/->ZSetVecEntry (:tuple row#) :*))]
+                        (if (and cur# (not= (:wt row#) (:wt cur#)))
+                          (disj! ss# cur#)
+                          (conj! ss# row#))))
+                    (transient (z/gen-op-zset ~op))
+                    (eduction
+                     (filter (fn [~row-sym]
+                               (and ~@filter-body)))
+                     (map (fn [~row-sym]
+                            ~proj))
+                     (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))))
       :map (let [row-sym (gensym)
                  args (into []
                             (map #(if (dbsp/is-idx? %)
@@ -228,13 +230,17 @@
                                             (map #(z/->ZSetVecEntry (:tuple %) (not (:wt %))))
                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
-                                        (c.state/->OpStateRef '~input-1)
-                                        ;(wizard.circuit.state/getv ~state-var '~input-1)
-                                        )
+                                        (c.state/->OpStateRef '~input-1))
       :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
-                                            (reduce z/add-row
-                                                    (gen-zset-for-join ~op ~circuit)
-                                                    (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
+                                            (persistent!
+                                             (reduce
+                                              (fn [ss# row#]
+                                                (let [cur# (z/at ss# (z/->ZSetVecEntry (:tuple row#) :*))]
+                                                  (if (and cur# (not= (:wt row#) (:wt cur#)))
+                                                    (disj! ss# cur#)
+                                                    (conj! ss# row#))))
+                                              (transient (gen-zset-for-join ~op ~circuit))
+                                              (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
 
       :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id

@@ -4,7 +4,6 @@
             [wizard.circuit-impl-inline :as impl]
             [caudex.circuit :as c]
             [wizard.circuit-test-cases :as test-cases]
-            [matcher-combinators.matchers :as m]
             [wizard.lmdb.circuit-state :as c.state])
   (:import (java.nio.file Files)
            (java.io File)))
