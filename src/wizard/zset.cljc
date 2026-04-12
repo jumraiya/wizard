@@ -21,6 +21,9 @@
   ;;        (= (:tuple this) (:tuple other))))
   ;; (hashCode [_]
   ;;   (hash tuple))
+  Comparable
+  (compareTo [_this row]
+    (compare tuple (:tuple row)))
   ZSetEntry
   (join-entry [_this zset-row]
     (->ZSetVecEntry (into tuple (:tuple zset-row)) (and wt (:wt zset-row)))))

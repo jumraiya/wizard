@@ -1,5 +1,7 @@
 (ns wizard.circuit.state
   (:require [wizard.zset :as zs]
+            [caudex.dbsp :as dbsp]
+            [caudex.utils :as utils]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 (defprotocol CircuitState
@@ -10,7 +12,8 @@
   (add [this tx op-id delta] "Adds the delta to the current value of an op but doesn't save it in storage")
   (slice [this tx op-id lookup-key] "Searches the current zset contained in the given op using a lookup key, used for joins")
   (commit [this tx] "Saves the current state into storage")
-  (get-view [this]))
+  (get-view [this])
+  (get-last-processed-tx [this]))
 
  (defn- upd [c-state tx]
   (swap! (:state c-state)
@@ -28,25 +31,20 @@
 
 (defn- atom-slice [state tx op-id lookup-key]
   (let [entry (zs/->ZSetVecEntry (vec (butlast lookup-key)) (last lookup-key))]
-    (sset/slice
-     (or (getv state tx op-id)
-         (sset/sorted-set))
-     entry entry)))
+    (into (sset/sorted-set)
+     (sset/slice
+      (or (getv state tx op-id)
+          (sset/sorted-set))
+      entry entry))))
 
 (defrecord OpStateRef [ref-op-id])
 
 (defn merge-delta
   "Merge a base seq of ZSetVecEntry with a delta, applying cancellation."
   [base delta]
-  (let [base-map (into {} (map (fn [r] [(:tuple r) (:wt r)])) base)
-        merged   (reduce (fn [m row]
-                           (let [k (:tuple row) v (:wt row) e (get m k)]
-                             (cond
-                               (nil? e) (assoc m k v)
-                               (= e v)  m
-                               :else    (dissoc m k))))
-                         base-map delta)]
-    (mapv (fn [[t w]] (zs/->ZSetVecEntry t w)) merged)))
+  (reduce zs/add-row
+          base
+          delta))
 
 
 (defrecord AtomCircuitState [^clojure.lang.Atom state]
@@ -65,12 +63,10 @@
                    (:ref-op-id (get tx op-id))
                    op-id)
           base (atom-slice this tx op-id' lookup-key)
-          lk (filterv #(not= :* %) lookup-key)
           deltas (when (and (contains? (:deltas tx) op-id') (= op-id op-id))
-                   (filter #(every?
-                             (fn [[idx e]] (= (nth (:tuple %) idx) e))
-                             (map-indexed vector lk))
-                           (get-in tx [:deltas op-id'])))]
+                   (into (sset/sorted-set)
+                         (sset/slice (get-in tx [:deltas op-id'])
+                                     lookup-key lookup-key)))]
       (if (seq deltas)
         (merge-delta base deltas)
         base)))
@@ -79,6 +75,30 @@
                               :clj (throw (Exception. "Trying to reset a delta state!")))
                            (assoc tx op-id zset)))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
-  (commit [this tx] (upd this tx)))
+  (commit [this tx]
+    (upd this tx)
+    (swap! state
+           (fn [state]
+             (-> state
+                 (update :view
+                         (fn [view]
+                           (persistent!
+                            (reduce
+                             #(if (contains? %1 (:tuple %2))
+                                (if (false? (:wt %2))
+                                  (disj! %1 (:tuple %2))
+                                  %1)
+                                (conj! %1 (:tuple %2)))
+                             (transient view)
+                             (get tx (:output-op state))))))
+                 (assoc :last-processed-tx (some-> tx :tx-data last (nth 3))))))
+    nil)
+  (get-view [_this]
+    (-> @state :view))
+  (get-last-processed-tx [_]
+    (:last-processed-tx @state)))
 
 
+(defn atom-state [circuit]
+  (let [last-op (last (utils/topsort-circuit circuit))]
+    (->AtomCircuitState (atom {:output-op (dbsp/-get-id last-op) :view (sset/sorted-set)}))))

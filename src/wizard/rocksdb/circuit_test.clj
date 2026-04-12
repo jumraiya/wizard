@@ -3,6 +3,7 @@
             [matcher-combinators.test]
             [wizard.circuit-impl-inline :as impl]
             [caudex.circuit :as c]
+            [wizard.circuit.state :as st]
             [wizard.circuit-test-cases :as test-cases]
             [wizard.rocksdb.circuit-state :as c.state])
   (:import (java.nio.file Files)

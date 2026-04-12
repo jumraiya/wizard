@@ -1,6 +1,7 @@
 (ns wizard.circuit-inline-impl-test
   (:require [clojure.test :refer [deftest is]]
             [matcher-combinators.test]
+            [caudex.circuit :as c]
             [wizard.circuit-impl-inline :as impl]
             [wizard.circuit-test-cases :as test-cases]
             [wizard.circuit.state :as c.state]))
@@ -10,8 +11,9 @@
 (deftest run-cases
   (doseq [{:keys [query rules data case]} test-cases/test-cases]
     (println (str "Testing " case))
-    (let [circuit (eval `(impl/query->circuit ~query ~rules))
-          c-state (c.state/->AtomCircuitState (atom {}))]
+    (let [ccircuit (c/build-circuit query rules)
+          circuit (eval `(impl/reify-circuit ~ccircuit))
+          c-state (c.state/atom-state ccircuit)]
       (reduce
        (fn [c-state {:keys [tx output]}]
          (let [res (circuit c-state tx)]

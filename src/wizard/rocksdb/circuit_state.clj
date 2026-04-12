@@ -42,12 +42,13 @@
                           (:ref-op-id tx-val)
                           op-id)
               lk (filterv #(not= :* %) lookup-key)
-              base (into []
+              base (into (sset/sorted-set)
                          (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
                          (rocksdb/prefix-slice ctx lk prefix-op))
               deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
-                       (sset/slice (get-in tx [:deltas prefix-op])
-                                   lookup-key lookup-key))]
+                       (into (sset/sorted-set)
+                             (sset/slice (get-in tx [:deltas prefix-op])
+                                         lookup-key lookup-key)))]
           (if (seq deltas)
             (st/merge-delta base deltas)
             base)))))
@@ -96,12 +97,40 @@
                               b))
                           {}
                           tx))]
-      (run! deref commits)
+      (run!
+       deref
+       (conj commits
+             (future
+               (let [tx-id (some-> tx :tx-data last (nth 3))]
+                 (rocksdb/batch-update-cols
+                  ctx
+                  (cond->
+                   (reduce
+                    (fn [batch row]
+                      (let [cur-wt (rocksdb/getv ctx (:tuple row) :default)]
+                        (cond
+                          (nil? cur-wt) (update-in batch [:default :puts]
+                                                   #(conj (or % []) [(:tuple row) true]))
+                          (not= cur-wt (:wt row)) (update-in batch [:default :dels] #(conj (or % []) (:tuple row))))))
+                    {}
+                    (eduction
+                     (filter #(true? (:wt %)))
+                     (get tx (:output-op opts))))
+                    tx-id (update-in [:default :puts] #(conj (or % []) [[:last-processed-tx] tx-id]))))))))
+
       (when batch-update
-        (rocksdb/batch-update-cols ctx batch-update)))))
+        (rocksdb/batch-update-cols ctx batch-update))))
+  (get-view [_this]
+    (into []
+          (comp (map first)
+                (remove #(= [:last-processed-tx] %)))
+          (rocksdb/get-all ctx :default)))
+  (get-last-processed-tx [_]
+    (rocksdb/getv ctx [:last-processed-tx] :default)))
 
 (defn rocksdb-state [dir circuit & [opts]]
-  (let [cols (into []
+  (let [last-op (last (c.utils/topsort-circuit circuit))
+        cols (into []
                    (comp
                     (filter
                      #(and (c.utils/is-op? %)
@@ -124,4 +153,8 @@
                         (.setMaxWriteBufferNumber 4)
                         (.setMinWriteBufferNumberToMerge 2)
                         (.setTableFormatConfig table-conf)))]
-    (->RocksDBState (rocksdb/open-db dir (cond-> {:col-families cols} col-options (assoc :col-options col-options))) opts)))
+    (->RocksDBState (rocksdb/open-db dir
+                                     (cond-> {:col-families cols}
+                                       col-options
+                                       (assoc :col-options col-options)))
+                    (assoc opts :output-op (dbsp/-get-id last-op)))))

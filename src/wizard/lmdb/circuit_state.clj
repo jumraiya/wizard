@@ -49,14 +49,15 @@
               lk (filterv #(not= :* %) lookup-key)
               start-t (when (:time-io? opts)
                         (System/nanoTime))
-              base (into []
+              base (into (sset/sorted-set)
                          (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
                          (l/prefix-search (get ctx prefix-op) lk))
               _ (when (:time-io? opts)
                   (swap! (:io-time opts) + (/ (double (- (System/nanoTime) start-t)) 1e6)))
               deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
-                       (sset/slice (get-in tx [:deltas prefix-op])
-                                   lookup-key lookup-key))
+                       (into (sset/sorted-set)
+                             (sset/slice (get-in tx [:deltas prefix-op])
+                                         lookup-key lookup-key)))
               v (if (seq deltas)
                   (st/merge-delta base deltas)
                   base)]
@@ -94,6 +95,20 @@
                            (.commit txn)))))
                    (:deltas tx))]
       (run! deref commits)
+      (let [view-ctx (get ctx (:output-op opts))]
+        (with-open [txn (l/write-txn view-ctx)]
+          (run!
+           (fn [row]
+             (let [cur-wt (l/get-val-txn view-ctx txn (:tuple row))]
+               (cond
+                 (nil? cur-wt) (l/put-txn view-ctx txn (:tuple row) (:wt row))
+                 (not= cur-wt (:wt row)) (l/delete-txn view-ctx txn (:tuple row)))))
+           (eduction
+            (filter #(true? (:wt %)))
+            (get tx (:output-op opts))))
+          (when-let [tx-id (some-> tx :tx-data last (nth 3))]
+           (l/put-txn view-ctx txn [:last-processed-tx] tx-id))
+          (.commit txn)))
       (when (:time-io? opts)
         (prn "io took" (+ @(:io-time opts)
                           (/ (double (- (System/nanoTime) start-t)) 1e6)) "ms")))
@@ -101,15 +116,24 @@
       (doseq [[op-id data] (dissoc tx :deltas)]
         (when (and (not (instance? OpStateRef data))
                    (symbol? op-id))
-          (lmdb-overwrite-op-txn ctx op-id data))))))
+          (lmdb-overwrite-op-txn ctx op-id data)))))
+  (get-view [_this]
+    (into []
+          (comp (map first)
+                (remove #(= [:last-processed-tx] %)))
+          (l/get-all (get ctx (:output-op opts)))))
+  (get-last-processed-tx [_]
+    (l/get-val (get ctx (:output-op opts)) [:last-processed-tx])))
 
 (defn lmdb-state
   [dir circuit & [opts]]
-  (let [dbs (into {}
+  (let [last-op (last (c.utils/topsort-circuit circuit))
+        dbs (into {}
                   (comp
                    (filter
                     #(and (c.utils/is-op? %)
-                          (= :integrate (dbsp/-get-op-type %))))
+                          (or (= (dbsp/-get-id last-op) (dbsp/-get-id %))
+                              (= :integrate (dbsp/-get-op-type %)))))
                    (map #(let [id (dbsp/-get-id %)
                                path (Paths/get dir (into-array String [(name id)]))
                                abs-path (.toString (.toAbsolutePath path))]
@@ -119,7 +143,9 @@
                              [(PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rwxr-x---"))]))
                            [id (l/open-db abs-path (name id))])))
                   (g/nodes circuit))]
-    (->LMDBState dbs (assoc opts :io-time (atom 0)))))
+    (->LMDBState dbs (assoc opts
+                            :io-time (atom 0)
+                            :output-op (dbsp/-get-id last-op)))))
 
 (comment
   (def circ (caudex.circuit/build-circuit '[:find ?a ?b
