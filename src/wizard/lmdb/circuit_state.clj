@@ -26,7 +26,8 @@
 
 (defrecord LMDBState [ctx opts]
   st/CircuitState
-  (init-tx [_] (reset! (:io-time opts) 0) {})
+  java.lang.AutoCloseable
+  (init-tx [_] (reset! (:io-time opts) {}) {})
   (getv [_this op-id]
     (into []
           (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
@@ -53,7 +54,12 @@
                          (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
                          (l/prefix-search (get ctx prefix-op) lk))
               _ (when (:time-io? opts)
-                  (swap! (:io-time opts) + (/ (double (- (System/nanoTime) start-t)) 1e6)))
+                  (swap! (:io-time opts)
+                         update op-id
+                         (fn [io-time]
+                           (update io-time :slice
+                                   #(+ (or % 0)
+                                       (/ (double (- (System/nanoTime) start-t)) 1e6))))))
               deltas (when (and (contains? (:deltas tx) prefix-op) (= prefix-op op-id))
                        (into (sset/sorted-set)
                              (sset/slice (get-in tx [:deltas prefix-op])
@@ -79,11 +85,11 @@
                          (map (fn [[k v]] (zs/->ZSetVecEntry (vec (rest k)) v)))
                          (l/prefix-search ctx [(:ref-op-id data)]))]
           (lmdb-overwrite-op-txn ctx op-id data))))
-    (let [start-t (when (:time-io? opts) (System/nanoTime))
-          commits (mapv
+    (let [commits (mapv
                    (fn [[op-id delta]]
                      (future
-                       (let [op-ctx (get ctx op-id)]
+                       (let [start-t (when (:time-io? opts) (System/nanoTime))
+                             op-ctx (get ctx op-id)]
                          (with-open [txn (l/write-txn op-ctx)]
                            (doseq [row delta]
                              (if (:initializing? opts)
@@ -92,7 +98,14 @@
                                  (cond
                                    (nil? cur-wt) (l/put-txn op-ctx txn (:tuple row) (:wt row))
                                    (not= cur-wt (:wt row)) (l/delete-txn op-ctx txn (:tuple row))))))
-                           (.commit txn)))))
+                           (.commit txn))
+                         (when (:time-io? opts)
+                           (swap! (:io-time opts)
+                                  update op-id
+                                  (fn [io-time]
+                                    (update io-time :commit
+                                            #(+ (or % 0)
+                                                (/ (double (- (System/nanoTime) start-t)) 1e6)))))))))
                    (:deltas tx))]
       (run! deref commits)
       (let [view-ctx (get ctx (:output-op opts))]
@@ -103,15 +116,14 @@
                (cond
                  (nil? cur-wt) (l/put-txn view-ctx txn (:tuple row) (:wt row))
                  (not= cur-wt (:wt row)) (l/delete-txn view-ctx txn (:tuple row)))))
-           (eduction
-            (filter #(true? (:wt %)))
-            (get tx (:output-op opts))))
+           (get tx (:output-op opts)))
           (when-let [tx-id (some-> tx :tx-data last (nth 3))]
-           (l/put-txn view-ctx txn [:last-processed-tx] tx-id))
+            (l/put-txn view-ctx txn [:last-processed-tx] tx-id))
           (.commit txn)))
       (when (:time-io? opts)
-        (prn "io took" (+ @(:io-time opts)
-                          (/ (double (- (System/nanoTime) start-t)) 1e6)) "ms")))
+        (clojure.pprint/pprint (sort-by #(+ (:slice (val %) 0) (:commit (val %) 0))
+                                        #(compare %2 %1)
+                                        @(:io-time opts)))))
     (when (:debug? opts)
       (doseq [[op-id data] (dissoc tx :deltas)]
         (when (and (not (instance? OpStateRef data))
@@ -123,7 +135,13 @@
                 (remove #(= [:last-processed-tx] %)))
           (l/get-all (get ctx (:output-op opts)))))
   (get-last-processed-tx [_]
-    (l/get-val (get ctx (:output-op opts)) [:last-processed-tx])))
+    (l/get-val (get ctx (:output-op opts)) [:last-processed-tx]))
+  (close [_]
+    (run!
+     (fn [[_ v]]
+       (when (and (map? v) (instance? org.lmdbjava.Env (:env v)))
+         (.close (:env v))))
+     ctx)))
 
 (defn lmdb-state
   [dir circuit & [opts]]
@@ -146,6 +164,7 @@
     (->LMDBState dbs (assoc opts
                             :io-time (atom 0)
                             :output-op (dbsp/-get-id last-op)))))
+
 
 (comment
   (def circ (caudex.circuit/build-circuit '[:find ?a ?b

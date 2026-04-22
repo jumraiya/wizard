@@ -74,39 +74,6 @@
                  (codec/encode k))))
     (.write (:db ctx) (or opts (doto (WriteOptions.) (.disableWAL))) batch)))
 
-;; static Slice prefixUpperBound(byte[] prefix) {
-;;     byte[] upper = prefix.clone();
-;;     for (int i = upper.length - 1; i >= 0; i--) {
-;;       if (upper[i] != (byte) 0xFF) {
-;;         upper[i]++;
-;;         return new Slice(upper, 0, i + 1);
-;;       }
-;;     }
-;;     // All bytes were 0xFF — no upper bound (prefix covers everything)
-;;     return null; // pass null to setIterateUpperBound to disable the bound
-;;   }
-
-
-;; // No prefix extractor — open normally
-;;   try (final Options options = new Options().setCreateIfMissing(true);
-;;        final RocksDB db = RocksDB.open(options, "/path/to/db")) {
-
-;;     // For each lookup with a different prefix:
-;;     byte[] prefix = "some:variable:prefix".getBytes();
-
-;;     try (final Slice upperBound = prefixUpperBound(prefix);
-;;          final ReadOptions readOpts = new ReadOptions()
-;;              .setIterateUpperBound(upperBound);
-;;          final RocksIterator it = db.newIterator(readOpts)) {
-
-;;       it.seek(prefix);
-;;       while (it.isValid()) {
-;;         // all keys here start with prefix
-;;         it.next();
-;;       }
-;;     }
-;;   }
-
 (defn- get-prefix-upper-bound [prefix-bytes]
   (loop [i (-> prefix-bytes alength dec)]
     (if (not= 0xFF (aget prefix-bytes i))

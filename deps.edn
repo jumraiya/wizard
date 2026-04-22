@@ -1,8 +1,10 @@
 {:paths ["src" "."]
- :deps {datascript/datascript {:mvn/version "1.7.4"}
-        ubergraph/ubergraph {:mvn/version "0.9.0"}
-        org.replikativ/persistent-sorted-set {:mvn/version "0.4.119"}
+ :deps {datascript/datascript {:mvn/version "1.7.8"}
+        org.replikativ/persistent-sorted-set {:mvn/version "0.4.122"}
         net.clojars.jumraiya/caudex {:local/root "../caudex"}
+        datalevin/datalevin {:mvn/version "0.10.7"}
+        com.datomic/peer {:mvn/version "1.0.7556"}
+        prismatic/schema {:mvn/version "1.4.1"}
                                         ;net.clojars.jumraiya/caudex {:mvn/version "0.1.3"}
         org.clj-commons/byte-streams {:mvn/version "0.3.4"}
         org.rocksdb/rocksdbjni {:mvn/version "10.8.3"}
@@ -17,7 +19,6 @@
                               ;org.clojure/clojurescript {:mvn/version "1.11.54"}
                               com.datomic/peer {:mvn/version "1.0.7394"}
                               com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}
-                              datalevin/datalevin {:mvn/version "0.10.7"}
                               com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}
                               criterium/criterium {:mvn/version "0.4.6"}}
                  :jvm-opts ["-Djdk.attach.allowAttachSelf"]}

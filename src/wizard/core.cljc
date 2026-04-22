@@ -1,11 +1,17 @@
 (ns wizard.core
   (:require [caudex.circuit :as c]
+            [wizard.config :as config]
             [wizard.circuit-impl :as c.impl]
             [caudex.utils :as c.utils]
+            [clojure.edn :as edn]
+            [wizard.data-source :as d.src]
             [wizard.circuit-impl-inline :as impl-inline]
+            #?(:clj [wizard.lmdb.circuit-state :as l])
             [wizard.circuit.state :as c.state]
-                                        ;[caudex.impl.circuit :as c.impl]
-            [datascript.core :as ds]))
+            [datascript.core :as ds])
+  (:import (java.net URI)
+           (java.nio.file Path Paths Files LinkOption)
+           (java.nio.file.attribute PosixFilePermissions)))
 
 (defonce ^:private circuits (atom {}))
 
@@ -116,21 +122,10 @@
     (swap! subscriptions assoc id [])))
 
 
-(defn add-compiled-view [conn id circuit & {:keys [args] :or {args {}}}]
-  (prn "adding compiled view" circuit)
-  (let [tx-data (into (ds/datoms @conn :eavt)
-                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
-        c-state (c.state/->AtomCircuitState (atom {}))
-        view (try
-               (into #{}
-                     (comp
-                      (filter #(true? (last %)))
-                      (map butlast)
-                      (map vec))
-                     (circuit c-state tx-data))
-               (catch #?(:cljs js/Error :clj Exception) err
-                 (prn err)))]
-    (swap! circuits assoc id {:circuit circuit :view view :diffs [] :state c-state})
+(defn add-compiled-view [id circuit compiled-view data-dir & {:keys [args] :or {args {}}}]
+  (let [c-state #?(:clj (l/lmdb-state data-dir circuit)
+                   :cljs (c.state/atom-state circuit))]
+    (swap! circuits assoc id {:circuit compiled-view :state c-state})
     (swap! subscriptions assoc id [])))
 
 
@@ -205,13 +200,47 @@
   (reset! subscriptions {})
   (reset! circuits {}))
 
+(defn load-from-conf [{:wizard/keys [workspace-dir circuits] :as conf}]
+  (config/ensure-config-valid conf)
+  (let [main-path (Paths/get (URI/create (str "file://" workspace-dir)))
+        edn-path (.resolve ^Path main-path "definitions")
+        data-path (.resolve ^Path main-path "data")]
+    (doseq [path [main-path edn-path data-path]]
+      (Files/createDirectories
+       path (into-array
+             [(PosixFilePermissions/asFileAttribute
+               (PosixFilePermissions/fromString "rwxr-xr--"))])))
+    (doseq [[c-name {:wizard.circuit/keys [query rules]}] circuits]
+      (let [c-data-path (.resolve ^Path data-path (name c-name))
+            c-edn-path (.resolve ^Path edn-path (str (name c-name) ".edn"))
+            data-exists? (Files/exists c-data-path (into-array LinkOption []))
+            edn-exists? (Files/exists c-edn-path (into-array LinkOption []))
+            edn-path-str (-> c-edn-path (.toAbsolutePath) (.toString))
+            data-path-str (-> c-data-path (.toAbsolutePath) (.toString))
+            circuit (if edn-exists?
+                      (c.utils/edn->circuit (edn/read-string (slurp edn-path-str)))
+                      (c/build-circuit query rules))]
+        (when (and data-exists? (not edn-exists?))
+          (throw (ex-info (str "Circuit data found but not the definition! Please delete " c-data-path) {:circuit c-name})))
+        (when (not edn-exists?)
+          (spit edn-path-str (pr-str (c.utils/circuit->edn circuit))))
+        (when (not data-exists?)
+          (Files/createDirectories
+           data-path (into-array
+                      [(PosixFilePermissions/asFileAttribute
+                        (PosixFilePermissions/fromString "rwxr-xr--"))])))
+        (prn edn-path-str circuit)
+        (add-compiled-view
+         c-name circuit (eval `(impl-inline/reify-circuit ~circuit)) data-path-str)))))
 
 
 (comment
+  (load-from-conf wizard.examples.config/config)
+  
   (def conn (ds/create-conn))
 
   (add-view conn :test '[:find ?a :where [?a :attr-1 ?b] [?b :attr-2 "asd"]])
-  ;(def circ (impl-inline/read-from-file "/Users/jumraiya/projects/escape-room/public/views/put-action.edn"))
+                                        ;(def circ (impl-inline/read-from-file "/Users/jumraiya/projects/escape-room/public/views/put-action.edn"))
 
   (ds/transact!
    conn
