@@ -229,7 +229,6 @@
            data-path (into-array
                       [(PosixFilePermissions/asFileAttribute
                         (PosixFilePermissions/fromString "rwxr-xr--"))])))
-        (prn edn-path-str circuit)
         (add-compiled-view
          c-name circuit (eval `(impl-inline/reify-circuit ~circuit)) data-path-str)))))
 

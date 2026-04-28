@@ -6,6 +6,7 @@
    #?(:clj [clojure.data.json :as json])
    [caudex.graph :as g]
    [wizard.circuit.state :as state]
+   [wizard.lmdb.circuit-state :as l.state]
    [wizard.rocksdb.circuit-state :as r.state]
    [wizard.circuit-impl-inline :as impl-inline]
    [caudex.utils :as utils]
@@ -80,7 +81,10 @@
              (.click link)
              (.revokeObjectURL js/URL url))))
 
- (defn compare-states [circuit c-state caudex-impl inline-impl transactions]
+(defn dump-circuit [circuit]
+  (dump-debug-data (atom (init-debug-data circuit))))
+
+(defn compare-states [circuit c-state caudex-impl inline-impl transactions]
   (let [debug-data (atom (init-debug-data circuit))
         ops-order (utils/topsort-circuit circuit)]
     (reduce
@@ -106,6 +110,7 @@
                                         ;(prn (dbsp/-get-id op) stream-data)
              (dump-debug-data debug-data)
              (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
+             (throw (Exception. "asd"))
              (when (not= stream-data ref-data)
                (throw
                 (ex-info
@@ -117,40 +122,11 @@
 
 (comment
   (def circuit
-    (c/build-circuit
-     '[:find ?a ?arg ?o ?det
-       :where
-       [?a :action/arg ?arg]
-       [?a :action/type ?action-type]
-       [?a :action/type :inspect]
-       (not-join [?a]
-                 [?a :action/inspect-processed? true])
-       (or-join [?o ?arg ?det]
-                (and
-                 [(not= ?arg "player")]
-                 [?o :object/description ?arg]
-                 [?o :object/detailed-description ?det]
-                 [?p :object/description "player"]
-                 [?p :object/location ?l]
-                 (or-join [?l ?p ?o]
-                          [?o :object/location ?p]
-                          [?o :object/location ?l]))
-                (and
-                 (or-join [?arg]
-                          [(= ?arg "player")]
-                          (not-join [?arg]
-                                    [_ :object/description ?arg])
-                          (and
-                           [?o :object/description ?arg]
-                           [(not= ?arg "player")]
-                           (not-join [?o]
-                                     [?p :object/description "player"]
-                                     [?p :object/location ?l]
-                                     (or-join [?l ?p ?o]
-                                              [?o :object/location ?p]
-                                              [?o :object/location ?l]))))
-                 [(ground :not-found) ?o]
-                 [(ground "no-description") ?det]))]))
+    (caudex.utils/edn->circuit
+                 (clojure.edn/read-string
+                  (slurp "/Users/jumraiya/projects/wizard/benchmark/datalevin/circuits/datalevin-join-benchmark.edn"))))
+  (def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
+  (state/get-view c-state)
   ;; (spit "/tmp/circ.edn" (utils/circuit->edn circuit))
   ;; (def circuit (utils/edn->circuit (slurp "/tmp/circ.edn")))
   (let [transactions [[[:obj :object/description "desc" 123 true]
@@ -170,11 +146,13 @@
         caudex-impl (c.impl/reify-circuit circuit)
         inline-impl (impl-inline/reify-circuit circuit)
         inline-state (atom {})
-        c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
-                                        ;(state/->AtomCircuitState inline-state)
+        ;; c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
+        c-state (state/atom-state circuit)
         ]
     (compare-states circuit c-state caudex-impl inline-impl transactions))
-
+  
+  (dump-circuit )
+  
   (def op (some #(when (= 'input-17094 (dbsp/-get-id %)) %) (g/nodes circuit)))
 
   (def zs (into (sset/sorted-set-by (wizard.zset/mk-comparator [1 0 2 3]))

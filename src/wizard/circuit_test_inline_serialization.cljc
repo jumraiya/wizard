@@ -234,7 +234,7 @@
                      (.revokeObjectURL js/URL url)))
               circ #?(:cljs (eval-cljs `(impl/read-from-file ~path))
                       :clj (eval `(impl/read-from-file ~path)))
-              c-state (c.state/->AtomCircuitState (atom {}))]
+              c-state (c.state/atom-state c)]
           (doseq [[tx output] data]
             (let [res (circ c-state tx)]
               (when (some? output)
