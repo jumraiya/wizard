@@ -5,35 +5,39 @@
             [caudex.utils :as utils]))
 
 
-(defn- sort-nodes [circuit nodes]
+(defn- find-subgraph
+  ([circuit op]
+   (find-subgraph circuit [op] (mapv :src (g/in-edges circuit op))))
+  ([circuit nodes layer]
+   (let [{:keys [terminal non-terminal]}
+         (reduce
+          #(if (or (= :integrate (dbsp/-get-op-type %2))
+                   (some (fn [p]
+                           (when (= :root (dbsp/-get-op-type p))
+                             p))
+                         (mapv :src (g/in-edges circuit %2))))
+             (update %1 :terminal conj %2)
+             (update %1 :non-terminal conj %2))
+          {:terminal [] :non-terminal []}
+          layer)
+         next-layer (reduce #(into %1 (map :src) (g/in-edges circuit %2)) [] non-terminal)
+         nodes (into (into terminal non-terminal) nodes)]
+     (if (seq next-layer)
+       (find-subgraph circuit nodes next-layer)
+       nodes))))
+
+(defn- find-subgraphs [circuit]
   (let [sorted-nodes (into {}
                            (map-indexed #(vector (dbsp/-get-id %2) %1))
                            (utils/topsort-circuit circuit))]
-    (sort-by #(get sorted-nodes (dbsp/-get-id %)) nodes)))
-
-#trace
- (defn- find-subgraph
-   ([circuit op]
-    (find-subgraph circuit [op] (mapv :src (g/in-edges circuit op))))
-   ([circuit nodes layer]
-    (let [{:keys [terminal non-terminal]}
-          (reduce
-           #(if (or (= :integrate (dbsp/-get-op-type %2))
-                    (some (fn [p]
-                            (when (= :root (dbsp/-get-op-type p))
-                              p))
-                          (mapv :src (g/in-edges circuit %2))))
-              (update %1 :terminal conj %2)
-              (update %1 :non-terminal conj %2))
-           {:terminal [] :non-terminal []}
-           layer)
-          next-layer (reduce #(into %1 (map :src) (g/in-edges circuit %2)) [] non-terminal)
-          nodes (into (into terminal non-terminal) nodes)]
-      (if (seq next-layer)
-        (sort-nodes
-         circuit
-         (find-subgraph circuit nodes next-layer))
-        nodes))))
+    (into {}
+          (map (fn [op]
+                 [(dbsp/-get-id op)
+                  (sort-by #(get sorted-nodes (dbsp/-get-id %))
+                           (find-subgraph circuit op))]))
+          (eduction
+           (filter #(= :integrate (dbsp/-get-op-type %)))
+           (g/nodes circuit)))))
 
 (comment
   (spit "/tmp/circuit.edn"
@@ -61,6 +65,8 @@
                                       [(ground :not-accessible) ?accessible]))])))
 
   (wizard.circuit.debug/dump-circuit circuit)
+  (def nodes (get (find-subgraphs circuit) 'integrate-79019))
+  (find-subgraphs circuit)
   (prn
    (let [node
          (some #(when (= 'integrate-78890
