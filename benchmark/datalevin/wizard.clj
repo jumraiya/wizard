@@ -175,6 +175,48 @@
         (recur remaining datoms-processed)
         datoms-processed))))
 
+(defn- heap-used-frac []
+  (let [rt (Runtime/getRuntime)
+        used (- (.totalMemory rt) (.freeMemory rt))
+        mx (.maxMemory rt)]
+    (/ (double used) mx)))
+
+(defn- adjust-siz
+  "Shrinks batch size under heap pressure, grows it when there's slack."
+  [siz frac min-siz max-siz]
+  (cond
+    (> frac 0.70) (max min-siz (long (/ siz 2)))
+    (< frac 0.40) (min max-siz (long (* siz 1.5)))
+    :else siz))
+
+(defn batch-process-datoms-adaptive
+  "Like batch-process-datoms but adjusts batch size based on JVM heap pressure.
+   Returns {:processed N :siz S} so the learned siz can be carried into the next call."
+  [circ c-state siz datoms datoms-processed]
+  (let [min-siz 10000
+        max-siz 5000000]
+    (loop [datoms datoms
+           siz siz
+           datoms-processed datoms-processed]
+      (let [attr-batch-t (System/nanoTime)
+            data (take siz datoms)
+            _delta (circ c-state data)
+            datoms-processed (+ datoms-processed (count data))
+            remaining (drop siz datoms)
+            frac (heap-used-frac)
+            next-siz (adjust-siz siz frac min-siz max-siz)]
+        (when (< next-siz siz) (System/gc))
+        (prn "datoms processed" datoms-processed
+             "siz" siz
+             "batch took" (/ (double (- (System/nanoTime) attr-batch-t)) 1e6) "ms"
+             "heap" (format "%.0f%%" (* 100.0 frac))
+             (cond (< next-siz siz) (str "→ shrink to " next-siz)
+                   (> next-siz siz) (str "→ grow to " next-siz)
+                   :else ""))
+        (if (seq remaining)
+          (recur remaining next-siz datoms-processed)
+          {:processed datoms-processed :siz next-siz})))))
+
 
 (defn test-bench [& _]
   (let [circuit (caudex.utils/edn->circuit
@@ -207,54 +249,58 @@
         ;; ccirc (eval `(impl/reify-circuit ~circuit))
         db (d/db job/conn)
         attrs (->>
-               [:movie-companies/company
-                :kind-type/kind
+               [;; :movie-companies/company
+                ;; :kind-type/kind
                 :title/title
-                :movie-companies/movie
-                :movie-info-idx/info-type
-                :movie-info-idx/movie
-                :title/kind
-                :movie-info-idx/info
-                :company-name/country-code
-                :info-type/info
-                :company-name/name
-                :movie-info/info-type
-                :company-type/kind
-                :movie-companies/company-type
-                :movie-info/movie]
+                ;; :movie-companies/movie
+                ;; :movie-info-idx/info-type
+                ;; :movie-info-idx/movie
+                ;; :title/kind
+                ;; :movie-info-idx/info
+                ;; :company-name/country-code
+                ;; :info-type/info
+                ;; :company-name/name
+                ;; :movie-info/info-type
+                ;; :company-type/kind
+                ;; :movie-companies/company-type
+                ;; :movie-info/movie
+                ]
                (sort-by
                 #(d/count-datoms db nil % nil))
                reverse)
-        ;; c-state (rocksdb.state/rocksdb-state "/tmp/bench-test" circuit {:initializing? true})
-        siz 1000000
+        c-state (rocksdb.state/rocksdb-state "/tmp/bench-test" circuit #_{:initializing? true})
+        ;; c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit {:initializing? true})
+        siz 1000
         start-t (System/nanoTime)]
     ;; prof/profile
     ;; {:event :wall}
-    #_(loop [datoms (d/seek-datoms db :eav nil nil nil siz) datoms-processed 0]
-      (let [batch-t (System/nanoTime)
-            _delta (with-open [c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit {:initializing? true})]
-                     (circ c-state datoms))
-            datoms-processed (+ datoms-processed (count datoms))
-            remaining (d/seek-datoms db :eav (inc (:e (last datoms))) nil nil siz)]
-        (prn "datoms processed" datoms-processed
-             "batch took" (/ (double (- (System/nanoTime) batch-t)) 1e6) "ms"
-             "time elapsed" (/ (double (- (System/nanoTime) start-t)) 1e6) "ms")
-        (if (seq remaining)
-          (recur remaining datoms-processed)
-          datoms-processed)))
+    (loop [datoms (d/seek-datoms db :eav nil nil nil siz) datoms-processed 0]
+        (let [batch-t (System/nanoTime)
+              delta (circ c-state datoms)
+              datoms-processed (+ datoms-processed (count datoms))
+              remaining (d/seek-datoms db :eav (inc (:e (last datoms))) nil nil siz)]
+          (prn "datoms processed" datoms-processed
+               "batch took" (/ (double (- (System/nanoTime) batch-t)) 1e6) "ms"
+               "time elapsed" (/ (double (- (System/nanoTime) start-t)) 1e6) "ms"
+               "delta" delta)
+          (if (seq remaining)
+            (recur remaining datoms-processed)
+            datoms-processed)))
 
-    (loop [attrs attrs
-             datoms-processed 0]
-        (if-let [attr (first attrs)]
-          (let [_ (prn "processing" attr)
-                datoms (d/datoms db :ave attr)
-                attr-start-t (System/nanoTime)
-                datoms-processed (with-open [c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit {:initializing? true})]
-                                   (batch-process-datoms circ c-state siz datoms datoms-processed))]
-            (prn attr "finished took" (/ (double (- (System/nanoTime) attr-start-t)) 1e6))
-            (recur (rest attrs) datoms-processed))
-          (with-open [c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit {:initializing? true})]
-            (prn "result" (st/get-view c-state) "total time elapsed" (/ (double (- (System/nanoTime) start-t)) 1e6)))))))
+    #_(loop [attrs attrs
+           siz siz
+           datoms-processed 0]
+      (if-let [attr (first attrs)]
+        (let [_ (prn "processing" attr)
+              datoms (d/datoms db :ave attr)
+              attr-start-t (System/nanoTime)
+              {next-siz :siz datoms-processed :processed}
+              (batch-process-datoms-adaptive circ c-state siz datoms datoms-processed)]
+          (prn attr "finished took" (/ (double (- (System/nanoTime) attr-start-t)) 1e6))
+          (System/gc)
+          (recur (rest attrs) next-siz datoms-processed))
+        (with-open [c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit {:initializing? true})]
+          (prn "result" (st/get-view c-state) "total time elapsed" (/ (double (- (System/nanoTime) start-t)) 1e6)))))))
 
 
 (comment
@@ -277,14 +323,15 @@
         (prn "done"))))
 
   (def c-state (lmdb.state/lmdb-state "/tmp/bench-test" circuit))
-  
+  (def c-state (rocksdb.state/rocksdb-state "/tmp/bench-test" circuit #_{:initializing? true}))
+
   (prn (st/get-view c-state))
+  (prn (st/get-last-processed-tx c-state))
 
   (prn (d/seek-datoms db :eav nil nil nil 10))
 
-
   (def res
-    #{["Hollywood Pictures" "4.4" "Breakfast of Champions"] ["Columbia Pictures Corporation" "6.6" "Blackhawk: Fearless Champion of Freedom"] ["Losers Take All" "4.7" "Losers Take All"] ["Weed Road Pictures" "6.3" "The Losers"] ["Fanfare Films" "5.2" "The Losers"] ["TBN Films" "5.0" "Carman: The Champion"] ["Primitive Nerd" "4.7" "Losers Take All"] ["Grand Champion Film Production" "4.3" "Grand Champion"] ["Hippo Motion LLC" "8.5" "Born Loser"] ["Reliable Pictures Corporation (I)" "4.1" "Loser's End"] ["Warner Bros" "6.3" "The Losers"] ["Perception Media" "6.9" "Beautiful Losers"] ["Code Productions" "5.0" "Carman: The Champion"] ["DL Sites" "5.8" "Losers Lounge"] ["TapouT Films" "7.4" "Once I Was a Champion"] ["Sneak Preview Entertainment" "2.5" "Beautiful Loser"] ["Springboard Films" "4.7" "Losers Take All"] ["Bear Media, The" "6.7" "5 Time Champion"] ["DC Entertainment" "6.3" "The Losers"] ["Centron Corporation" "3.7" "The Good Loser"] ["Jolliff Digital Production" "5.8" "Losers Lounge"] ["Supreme Studios" "2.3" "Supreme Champion"] ["Essanay Film Manufacturing Company, The" "6.7" "The Champion"] ["Metro-Goldwyn-Mayer (MGM)" "6.3" "Army Champions"] ["Shadow Motion Pictures" "1.8" "Champion Road: Arena"] ["501audio" "6.0" "God Thinks You're a Loser"] ["Summit Entertainment" "4.4" "Breakfast of Champions"] ["American International Productions" "5.7" "The Born Losers"] ["Rogue Arts" "5.5" "Loser"] ["Dark Castle Entertainment" "6.3" "The Losers"] ["Ted Fox Entertainment" "2.3" "Supreme Champion"] ["Metro-Goldwyn-Mayer (MGM)" "7.1" "Decathlon Champion: The Story of Glenn Morris"] ["Panorama Entertainment" "3.3" "Champions Forever: The Latin Legends"] ["Coyote County Productions" "5.7" "Coyote County Loser"] ["Muskat Filmed Properties" "5.4" "Champions"] ["Sidetrack Films" "6.9" "Beautiful Losers"] ["Shark Films" "6.7" "5 Time Champion"] ["Monogram Pictures" "6.9" "Lucky Losers"] ["Vitagraph Company of America" "3.9" "Battle of Jeffries and Sharkey for Championship of the World"] ["Rope the Moon Producions" "4.3" "Grand Champion"] ["Orchard Place Productions" "8.5" "Serial Loser"] ["Tough Crowd Productions" "7.4" "Once I Was a Champion"] ["Blacklake Productions" "6.9" "Beautiful Losers"] ["J & J Co." "5.5" "Jeffries-Johnson World's Championship Boxing Contest, Held at Reno, Nevada, July 4, 1910"] ["Egami Media" "6.3" "Roy Jones, Jr.: Heart of a Champion"] ["Paramount Pictures" "6.6" "Death of a Champion"] ["Stanley Kramer Productions" "7.4" "Champion"] ["Tri-Foot Productions" "6.0" "Night & Day Losers"] ["The Film Emporium" "7.0" "Champion"] ["Screen Plays" "7.4" "Champion"] ["Gener8Xion Entertainment" "5.0" "Carman: The Champion"] ["Fanfare Films" "5.7" "The Born Losers"] ["South Austin Pictures LLC" "6.0" "God Thinks You're a Loser"] ["New Champions Inc." "3.3" "Champions Forever: The Latin Legends"] ["Otis Productions" "5.7" "The Born Losers"] ["Ultimate Action" "2.3" "Supreme Champion"] ["Picture Perfect Entertainment" "2.3" "Supreme Champion"]})
+    #{["501audio" "6.0" "God Thinks You're a Loser"] ["American International Productions" "5.7" "The Born Losers"] ["Bear Media, The" "6.7" "5 Time Champion"] ["Blacklake Productions" "6.9" "Beautiful Losers"] ["Centron Corporation" "3.7" "The Good Loser"] ["Code Productions" "5.0" "Carman: The Champion"] ["Columbia Pictures Corporation" "6.6" "Blackhawk: Fearless Champion of Freedom"] ["Coyote County Productions" "5.7" "Coyote County Loser"] ["DL Sites" "5.8" "Losers Lounge"] ["Egami Media" "6.3" "Roy Jones, Jr.: Heart of a Champion"] ["Essanay Film Manufacturing Company, The" "6.7" "The Champion"] ["Fanfare Films" "5.2" "The Losers"] ["Fanfare Films" "5.7" "The Born Losers"] ["Gener8Xion Entertainment" "5.0" "Carman: The Champion"] ["Grand Champion Film Production" "4.3" "Grand Champion"] ["Hippo Motion LLC" "8.5" "Born Loser"] ["Hollywood Pictures" "4.4" "Breakfast of Champions"] ["J & J Co." "5.5" "Jeffries-Johnson World's Championship Boxing Contest, Held at Reno, Nevada, July 4, 1910"] ["Jolliff Digital Production" "5.8" "Losers Lounge"] ["Losers Take All" "4.7" "Losers Take All"] ["Metro-Goldwyn-Mayer (MGM)" "6.3" "Army Champions"] ["Metro-Goldwyn-Mayer (MGM)" "7.1" "Decathlon Champion: The Story of Glenn Morris"] ["Monogram Pictures" "6.9" "Lucky Losers"] ["Muskat Filmed Properties" "5.4" "Champions"] ["New Champions Inc." "3.3" "Champions Forever: The Latin Legends"] ["Orchard Place Productions" "8.5" "Serial Loser"] ["Otis Productions" "5.7" "The Born Losers"] ["Panorama Entertainment" "3.3" "Champions Forever: The Latin Legends"] ["Paramount Pictures" "6.6" "Death of a Champion"] ["Perception Media" "6.9" "Beautiful Losers"] ["Picture Perfect Entertainment" "2.3" "Supreme Champion"] ["Primitive Nerd" "4.7" "Losers Take All"] ["Reliable Pictures Corporation (I)" "4.1" "Loser's End"] ["Rogue Arts" "5.5" "Loser"] ["Rope the Moon Producions" "4.3" "Grand Champion"] ["Screen Plays" "7.4" "Champion"] ["Shadow Motion Pictures" "1.8" "Champion Road: Arena"] ["Shark Films" "6.7" "5 Time Champion"] ["Sidetrack Films" "6.9" "Beautiful Losers"] ["Sneak Preview Entertainment" "2.5" "Beautiful Loser"] ["South Austin Pictures LLC" "6.0" "God Thinks You're a Loser"] ["Springboard Films" "4.7" "Losers Take All"] ["Stanley Kramer Productions" "7.4" "Champion"] ["Summit Entertainment" "4.4" "Breakfast of Champions"] ["Supreme Studios" "2.3" "Supreme Champion"] ["TBN Films" "5.0" "Carman: The Champion"] ["TapouT Films" "7.4" "Once I Was a Champion"] ["Ted Fox Entertainment" "2.3" "Supreme Champion"] ["The Film Emporium" "7.0" "Champion"] ["Tough Crowd Productions" "7.4" "Once I Was a Champion"] ["Tri-Foot Productions" "6.0" "Night & Day Losers"] ["Ultimate Action" "2.3" "Supreme Champion"] ["Vitagraph Company of America" "3.9" "Battle of Jeffries and Sharkey for Championship of the World"]})
 
   (def expected-res
     #{["Hollywood Pictures" "4.4" "Breakfast of Champions"]
@@ -354,6 +401,7 @@
       ["Otis Productions" "5.7" "The Born Losers"]
       ["Ultimate Action" "2.3" "Supreme Champion"]
       ["Picture Perfect Entertainment" "2.3" "Supreme Champion"]})
+  (prn (clojure.set/difference expected-res res))
 
   (def circ (wizard.circuit-impl-inline/query->circuit
              '[:find ?cn.name ?mi-idx.info ?t.title

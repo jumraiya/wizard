@@ -10,6 +10,7 @@
             [clojure.pprint :as pp]
             [clojure.walk :as walk]
             #?(:clj [wizard.lmdb.circuit-state :as l])
+            [datomic.api :as d]
             #?(:clj [wizard.rocksdb.circuit-state :as r])
             [wizard.circuit.state :as c.state]
             [datascript.core :as ds])
@@ -99,6 +100,29 @@
    (get-in @circuits [circuit-id :state])))
 
 
+
+(defn sync-view
+  ([circuit-id]
+   (sync-view circuit-id @data-source))
+  ([circuit-id data-source]
+   (sync-view circuit-id data-source (get-last-processed-tx circuit-id)))
+  ([circuit-id data-source last-processed]
+   (future
+     (loop [datoms (if last-processed
+                     (d.src/datoms-since-tx-id data-source last-processed)
+                     (d.src/datoms data-source :eavt))]
+       (let [to-process (take 1000 datoms)
+             to-process (if (= :datomic (d.src/get-source-type data-source))
+                          (mapv
+                           (fn [[e a v tx added?]]
+                             [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
+                           to-process)
+                          to-process)
+             {:keys [circuit state]} (get @circuits circuit-id)]
+         (circuit state to-process)
+         (if-let [remaining (seq (drop 1000 datoms))]
+           (recur remaining)
+           (c.state/get-view state)))))))
 
 (defn add-compiled-view [{:keys [id circuit compiled-circuit data-dir storage-type]}
                          & {:keys [args] :or {args {}}}]
@@ -227,22 +251,55 @@
 
 
 (comment
-  (load-from-conf wizard.examples.config/config)
-  
-  (def conn (ds/create-conn))
+  (do
+    (def movie-schema [{:db/ident :movie/title
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The title of the movie"}
 
-  (add-view conn :test '[:find ?a :where [?a :attr-1 ?b] [?b :attr-2 "asd"]])
-                                        ;(def circ (impl-inline/read-from-file "/Users/jumraiya/projects/escape-room/public/views/put-action.edn"))
+                       {:db/ident :movie/genre
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The genre of the movie"}
 
-  (ds/transact!
+                       {:db/ident :movie/release-year
+                        :db/valueType :db.type/long
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The year the movie was released in theaters"}])
+
+    (def first-movies [{:movie/title "The Goonies"
+                        :movie/genre "action/adventure"
+                        :movie/release-year 1985}
+                       {:movie/title "Commando"
+                        :movie/genre "action/adventure"
+                        :movie/release-year 1985}
+                       {:movie/title "Repo Man"
+                        :movie/genre "punk dystopia"
+                        :movie/release-year 1984}])
+    (def uri "datomic:mem://mbrainz-1968-1973")
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    @(d/transact conn movie-schema)
+    @(d/transact conn first-movies))
+
+  (d/q '[:find ?title
+         :where
+         [?movie :movie/title ?title]
+         [?movie :movie/genre "action/adventure"]
+         [?movie :movie/release-year ?year]
+         [(>= ?year 1980)]]
+       (d/db conn))
+  (def d-source (wizard.core/datomic-source conn))
+  (wizard.core/set-data-source! d-source)
+  (wizard.core/load-from-conf config)
+  (wizard.data-source/get-source-type d-source)
+  (wizard.core/sync-view :action-movies-1980s d-source)
+  (wizard.core/get-view :action-movies-1980s)
+  (d/transact
    conn
-   [[:db/add 54 :attr-1 65]
-    [:db/add 65 :attr-2 "asd"]])
-
-  (-> @circuits :wizard.examples.adventure/inspect-action :circuit caudex.utils/circuit->map)
-  (ds/transact!
-   conn
-   [[:db/add 65 :attr-2 "cdv"]
-    [:db/retract 65 :attr-2 "asd"]
-    [:db/add 1 :attr-1 2]
-    [:db/add 2 :attr-2 "asd"]]))
+   [{:movie/title "Predator"
+     :movie/genre "action/adventure"
+     :movie/release-year 1987}])
+  (wizard.core/sync-view :action-movies-1980s data-source)
+  ;; include predator
+  (wizard.core/get-view :action-movies-1980s))

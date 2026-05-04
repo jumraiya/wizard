@@ -1,11 +1,11 @@
 {:paths ["src" "."]
  :deps {datascript/datascript {:mvn/version "1.7.8"}
         org.replikativ/persistent-sorted-set {:mvn/version "0.4.122"}
-        net.clojars.jumraiya/caudex {:local/root "../caudex"}
+        ;net.clojars.jumraiya/caudex {:local/root "../caudex"}
         datalevin/datalevin {:mvn/version "0.10.7"}
         com.datomic/peer {:mvn/version "1.0.7556"}
         prismatic/schema {:mvn/version "1.4.1"}
-                                        ;net.clojars.jumraiya/caudex {:mvn/version "0.1.3"}
+        net.clojars.jumraiya/caudex {:mvn/version "0.1.3"}
         org.rocksdb/rocksdbjni {:mvn/version "10.8.3"}
         org.lmdbjava/lmdbjava {:mvn/version "0.9.3"}}
 

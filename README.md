@@ -1,198 +1,60 @@
 # Wizard
 
-A reactive view system for DataScript databases that enables materialized views and reactive queries.
+A reactive view system for Datomic like databases that enables materialized views and reactive queries.
 [![Clojars Project](https://img.shields.io/clojars/v/net.clojars.jumraiya/wizard.svg)](https://clojars.org/net.clojars.jumraiya/wizard)
 
-## Overview
+## Rationale
 
-Wizard provides a way to create materialized views over DataScript databases that automatically update when the underlying data changes. Still a work in progress, only should be used with non production applications.
-Supports
-- standard queries including pattern, predicate, function, or-join, not-join clauses
-- rules (Does not support recursive rules currently)
+Datomic and similar databases are awesome and provide a lot of features that are sorely missed in other systems, e.g. transaction log/history, graph like access patterns etc.
 
-Does not support parameterized queries (WIP)
+However, in my experience (and perhaps others) there can be a challenge to scale efficiently and maintain high performance. Yes in Datomic you can add peers and leverage the object cache. But the amount of segments you can cache locally depend on the data locality of your tenants. 
 
-## Core Functions
+Incremental materialized views can address the above as well as provide a way to build state machines out of your database.
+
+Wizard is a library that implements the above and is based on ideas from [DBSP](https://arxiv.org/abs/2203.16684).
 
 
-### `transact`
+## How it works
 
-Wrapper around DataScript's `transact!` that triggers view updates.
+You give wizard a query plus any rules and wizard creates a "circuit" which is essentially the blueprint for an incremental materialized view. 
+
+A circuit consumes datalog transactions in the EAVT format and updates the result set as needed.
+
+Circuits can be attached to listeners (basically an event handler). In the future I will probably add functionality to connect to pub/sub systems.
+
+For each circuit there are two artifacts created: an edn definition file, a clojure function generated from the latter which actually consumes the transactions and outputs the result.
+
+
+## Usage
+
+First we need to specify which database we are consuming data from. 
+
+In this case Datomic,
 
 ```clojure
-(transact conn tx-data)
+(require '[wizard.core :as w]
+         '[datomic.api :as d])
+
+(w/set-data-source! 
+  (w/datomic-source (d/connect "datomic:dev://localhost:4334/mbrainz-1968-1973")))
 ```
+similar adapters exist for Datalevin and Datascript.
 
-**Parameters:**
-- `conn` - A DataScript connection
-- `tx-data` - Transaction data (same format as DataScript)
+A circuit can be constructed in two ways
 
-**Returns:** Transaction result (same as DataScript's `transact!`)
-
-**Important:** Use this instead of `ds/transact!` to ensure views are updated.
-
-
-### `add-view`
-
-Creates a new materialized view for a DataScript connection.
-
+During runtime, this might
 ```clojure
-(add-view conn id query & {:keys [args rules] :or {args {} rules []}})
-```
+(require '[wizard.core :as w])
 
-**Parameters:**
-- `conn` - A DataScript connection
-- `id` - A unique identifier for this view
-- `query` - A DataScript query (datalog)
-- `rules` - Optional vector of datalog rules (default: `[]`)
-
-**Example:**
-```clojure
-(require '[datascript.core :as ds]
-         '[wizard.core :as wizard])
-
-(def conn (ds/create-conn))
-
-(wizard/add-view conn :my-view 
-  '[:find ?person ?name 
-    :where 
-    [?person :person/name ?name]
-    [?person :person/age ?age]
-    [(> ?age 18)]])
-```
-
-### `get-view`
-
-Retrieves the current materialized results of a view.
-
-```clojure
-(get-view id)
-```
-
-**Parameters:**
-- `id` - The identifier of the view
-
-**Returns:** A set containing the current query results
-
-**Example:**
-```clojure
-(wizard/get-view :my-view)
-;; => #{[1 "Alice"] [2 "Bob"]}
-```
-
-### `subscribe-to-view`
-
-Registers a callback function to be called when a view changes.
-
-```clojure
-(subscribe-to-view id callback)
-```
-
-**Parameters:**
-- `id` - The identifier of the view
-- `callback` - A function that will be called with `(asserts retracts view)` when the view changes
-  - `asserts` - New tuples added to the view
-  - `retracts` - Tuples removed from the view  
-  - `view` - The complete current view
-
-**Example:**
-```clojure
-(wizard/subscribe-to-view :my-view
-  (fn [asserts retracts view]
-    (println "Added:" asserts)
-    (println "Removed:" retracts)
-    (println "Current view:" view)))
-```
-### `add+subscribe-to-view`
-
-Convenience function that combines `add-view` and `subscribe-to-view`.
-
-```clojure
-(add+subscribe-to-view conn id callback query & args)
-```
-
-**Example:**
-```clojure
-(wizard/add+subscribe-to-view conn :my-view
-  (fn [asserts retracts view]
-    (println "View changed!"))
-  '[:find ?e ?name :where [?e :person/name ?name]])
+(w/add-view 
 ```
 
 
-### `reset-all`
-
-Clears all views and subscriptions. Useful for testing or cleanup.
-
 ```clojure
-(reset-all)
-```
+(require '[wizard.core :as w])
 
-**Subscribers can also return transaction data** to be automatically applied:
-```clojure
-(wizard/add+subscribe-to-view conn :low-stock-items
-  (fn [asserts retracts view]
-    ;; Return transaction data that will be automatically applied
-    (for [[item-id name qty] asserts]
-      [[:db/add -1 :reorder/item item-id]
-       [:db/add -1 :reorder/quantity (* qty 3)]
-       [:db/add -1 :reorder/status :pending]]))
-  '[:find ?item ?name ?qty
-    :where 
-    [?item :item/name ?name]
-    [?item :item/quantity ?qty]
-    [(< ?qty 10)]])
-```
-
-**Reactive chains - one view's changes trigger another view:**
-```clojure
-;; Create a view for low stock items that auto-creates reorders
-(wizard/add+subscribe-to-view
- conn :low-stock-items
- (fn [asserts _retracts _view]
-   (mapv (fn [[idx [item-id _name qty]]]
-           {:db/id (* -1 (inc idx))
-            :reorder/item item-id
-            :reorder/quantity (* qty 5)
-            :reorder/status :pending})
-         (map-indexed vector asserts)))
- '[:find ?item ?name ?qty
-   :where
-   [?item :item/name ?name]
-   [?item :item/quantity ?qty]
-   [(< ?qty 10)]])
-
-;; Create a view for pending reorders that sends notifications
-(wizard/add+subscribe-to-view conn :pending-reorders
-  (fn [asserts retracts view]
-    (doseq [[reorder item qty] asserts]
-      (println "ALERT: Created reorder for item" item "quantity" qty)))
-  '[:find ?reorder ?item ?qty
-    :where
-    [?reorder :reorder/item ?item]
-    [?reorder :reorder/quantity ?qty]
-    [?reorder :reorder/status :pending]])
-
-;; Now when inventory drops:
-(wizard/transact conn
-  [[:db/add 101 :item/name "Widget A"]
-   [:db/add 101 :item/quantity 25]])
-
-;; Later, after sales...
-(wizard/transact conn
-  [[:db/add 101 :item/quantity 8]]) ; Below threshold of 10
-
-;; This triggers a chain reaction:
-;; 1. :low-stock-items view updates with Widget A
-;; 2. Its subscriber creates a reorder with quantity 40 (8 * 5)
-;; 3. :pending-reorders view updates with new reorder
-;; 4. Its subscriber prints the reorder alert
+(w/load
 ```
 
 
-## Notes
 
-- Views are materialized and kept in memory, so they're fast to query but use memory
-- The system automatically handles incremental updates - only changed portions of views are recalculated
-- Views can depend on other views through subscriptions, creating reactive chains
-- Always use `wizard/transact` instead of `ds/transact!` to ensure views are updated

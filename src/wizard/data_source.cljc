@@ -6,7 +6,8 @@
 
 (defprotocol DataSource
   (transact [this tx-data])
-  (datoms [this index] [this index c1] [this index c1 c2] [this index c1 c2 c3]))
+  (datoms [this index] [this index c1] [this index c1 c2] [this index c1 c2 c3])
+  (datoms-since-tx-id [this tx-id]))
 
 (defrecord DatalevinSource [ctx]
   DataSource
@@ -52,7 +53,16 @@
   (datoms [_this index c1 c2]
     (d/datoms (d/db (:conn ctx)) index c1 c2))
   (datoms [_this index c1 c2 c3]
-    (d/datoms (d/db (:conn ctx)) index c1 c2 c3)))
+    (d/datoms (d/db (:conn ctx)) index c1 c2 c3))
+  (datoms-since-tx-id [_ tx-id]
+    (let [t (d/tx->t tx-id)]
+      (d/datoms (d/since (d/db (:conn ctx)) t) :eavt))))
 
 (defn datomic-source [db-conn]
   (->DatomicSource {:conn db-conn}))
+
+(defn get-source-type [source]
+  (cond
+    (= "class wizard.data_source.DatomicSource" (str (type source))) :datomic
+    (instance? DataScriptSource source) :datascript
+    (instance? DatalevinSource source) :datalevin))

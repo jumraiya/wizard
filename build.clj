@@ -2,7 +2,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'net.clojars.jumraiya/wizard)
-(def version "0.1.3")
+(def version "0.1.31")
 (def class-dir "target/classes")
 (def basis (b/create-basis {:project "deps.edn"}))
 (def jar-file (format "target/net.clojars.jumraiya/%s-%s.jar" (name lib) version))
@@ -11,7 +11,7 @@
   (b/delete {:path "target"}))
 
 (defn- pom-template []
-  [[:description "A Clojure(script) state management library built using datascript"]
+  [[:description "A Clojure incremental view maintenance library targeted towards Datomic, Datascript"]
    [:url "https://github.com/jumraiya/wizard"]
    [:licenses
     [:license
