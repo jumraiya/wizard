@@ -10,12 +10,13 @@
   (getv [this op-id] [this tx op-id])
   (put [this tx op-id zset] "Saves the zset output by an op-id")
   (add [this tx op-id delta] "Adds the delta to the current value of an op but doesn't save it in storage")
-  (slice [this tx op-id lookup-key] "Searches the current zset contained in the given op using a lookup key, used for joins")
+  (slice [this op-id lookup-key] [this tx op-id lookup-key] "Searches the current zset contained in the given op using a lookup key, used for joins")
   (commit [this tx] "Saves the current state into storage")
   (get-view [this])
   (get-last-processed-tx [this]))
 
- (defn- upd [c-state tx]
+
+(defn- upd [c-state tx]
   (swap! (:state c-state)
          (fn [state]
            (reduce
