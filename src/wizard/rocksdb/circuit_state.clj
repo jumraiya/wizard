@@ -32,6 +32,11 @@
       (if (instance? OpStateRef v)
         (get-op-state ctx tx (:ref-op-id v))
         v)))
+  (slice [_this op-id lookup-key]
+    (let [lk (filterv #(not= :* %) lookup-key)]
+      (into (sset/sorted-set)
+            (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
+            (rocksdb/prefix-slice ctx lk op-id))))
   (slice [_this tx op-id lookup-key]
     (let [tx-val (clojure.core/get tx op-id)]
       (if (and (some? tx-val) (not (instance? OpStateRef tx-val)))
@@ -52,6 +57,7 @@
           (if (seq deltas)
             (st/merge-delta base deltas)
             base)))))
+
   (put [_ tx op-id zset] (assoc tx op-id zset))
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
   (commit [_this tx]

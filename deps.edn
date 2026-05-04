@@ -6,7 +6,6 @@
         com.datomic/peer {:mvn/version "1.0.7556"}
         prismatic/schema {:mvn/version "1.4.1"}
                                         ;net.clojars.jumraiya/caudex {:mvn/version "0.1.3"}
-        org.clj-commons/byte-streams {:mvn/version "0.3.4"}
         org.rocksdb/rocksdbjni {:mvn/version "10.8.3"}
         org.lmdbjava/lmdbjava {:mvn/version "0.9.3"}}
 
@@ -45,7 +44,7 @@
                                         "-XX:+UnlockDiagnosticVMOptions"
                                         "-Djdk.attach.allowAttachSelf"
                                         "-XX:+DebugNonSafepoints"
-                                        "-Xmx20G"]
+                                        "-Xmx16G"]
                              :main-opts ["-m" "benchmark.datalevin.wizard"]
                              :exec-fn benchmark.datalevin.wizard/-main
                              :extra-deps

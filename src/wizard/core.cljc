@@ -4,14 +4,20 @@
             [wizard.circuit-impl :as c.impl]
             [caudex.utils :as c.utils]
             [clojure.edn :as edn]
+            [clojure.string :as str]
             [wizard.data-source :as d.src]
             [wizard.circuit-impl-inline :as impl-inline]
+            [clojure.pprint :as pp]
+            [clojure.walk :as walk]
             #?(:clj [wizard.lmdb.circuit-state :as l])
+            #?(:clj [wizard.rocksdb.circuit-state :as r])
             [wizard.circuit.state :as c.state]
             [datascript.core :as ds])
   (:import (java.net URI)
            (java.nio.file Path Paths Files LinkOption)
            (java.nio.file.attribute PosixFilePermissions)))
+
+(defonce ^:private data-source (atom nil))
 
 (defonce ^:private circuits (atom {}))
 
@@ -59,73 +65,51 @@
    []
    @circuits))
 
+(defn set-data-source! [source]
+  (reset! data-source source))
+
 (defn add-view
-  "Creates and registers a materialized view from a Datalog query.
-
-  Args:
-    conn  - A DataScript connection
-    id    - A unique identifier for this view
-    query - A Datalog query in the form [:find ... :where ...]
-
-  Options:
-    :args  - Map of input arguments for the query (default: {})
-    :rules - Vector of Datalog rules to use with the query (default: [])
-
-  The view will be automatically maintained as transactions occur."
-  [conn id query
-   & {:keys [args rules] :or {args {} rules []}}]
-  (when (not (ds/conn? conn))
-    (let [msg (str "First argument should be a datascript connection, got " conn)]
-      (throw #?(:clj (Exception. msg)
-                :cljs (js/Error. msg)))))
-  (let [tx-data (into (ds/datoms @conn :eavt)
-                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
-        ccircuit (c/build-circuit query rules)
-        circuit (c.impl/reify-circuit ccircuit)
-        view (into #{}
-                   (comp
-                    (filter #(true? (last %)))
-                    (map butlast)
-                    (map vec))
-                   (circuit tx-data))]
+  [id query
+   & {:keys [storage-type args data-dir rules sync?] :or {args {} rules [] sync? true}}]
+  (let [ccircuit (c/build-circuit query rules)
+        compiled-circuit (c.impl/reify-circuit ccircuit)
+        c-state #?(:clj (case storage-type
+                          :wizard.storage/lmdb
+                          (l/lmdb-state data-dir ccircuit)
+                          :wizard.storage/rocksdb
+                          (r/rocksdb-state data-dir ccircuit)
+                          (c.state/atom-state ccircuit))
+                   :cljs (c.state/atom-state ccircuit))]
     (swap! ccircuits assoc id ccircuit)
-    (swap! circuits assoc id {:circuit circuit :view view :diffs []})
-    (swap! subscriptions assoc id [])))
+    (swap! circuits assoc id {:circuit compiled-circuit :state c-state})
+    (swap! subscriptions assoc id [])
+    (when sync?
+      (future
+        (loop [datoms (d.src/datoms @data-source :eavt)]
+          (let [to-process (take 1000 datoms)
+                {:keys [circuit state]} (get @circuits id)]
+            (circuit state to-process)
+            (if-let [remaining (seq (drop 1000 datoms))]
+              (recur remaining)
+              (c.state/get-view state))))))))
 
 
-(defn deserialize+add-view
-  "Creates and registers a materialized view from a serialized circuit EDN.
-
-  Args:
-    conn - A DataScript connection
-    id   - A unique identifier for this view
-    edn  - Serialized circuit representation in EDN format
-
-  Options:
-    :args - Map of input arguments for the circuit (default: {})
-
-  This function is useful for loading pre-compiled circuits without re-building
-  them from queries."
-  [conn id edn & {:keys [args] :or {args {}}}]
-  (let [ccircuit (c.utils/edn->circuit edn)
-        circuit (c.impl/reify-circuit ccircuit)
-        tx-data (into (ds/datoms @conn :eavt)
-                      (mapv #(vector ::c/input (key %) (val %) -1 true) args))
-        view (into #{}
-                   (comp
-                    (filter #(true? (last %)))
-                    (map butlast)
-                    (map vec))
-                   (circuit tx-data))]
-    (swap! ccircuits assoc id ccircuit)
-    (swap! circuits assoc id {:circuit circuit :view view :diffs []})
-    (swap! subscriptions assoc id [])))
+(defn get-last-processed-tx [circuit-id]
+  (c.state/get-last-processed-tx
+   (get-in @circuits [circuit-id :state])))
 
 
-(defn add-compiled-view [id circuit compiled-view data-dir & {:keys [args] :or {args {}}}]
-  (let [c-state #?(:clj (l/lmdb-state data-dir circuit)
+
+(defn add-compiled-view [{:keys [id circuit compiled-circuit data-dir storage-type]}
+                         & {:keys [args] :or {args {}}}]
+  (let [c-state #?(:clj (case storage-type
+                          :wizard.storage/lmdb
+                          (l/lmdb-state data-dir circuit)
+                          :wizard.storage/rocksdb
+                          (r/rocksdb-state data-dir circuit)
+                          (c.state/atom-state circuit))
                    :cljs (c.state/atom-state circuit))]
-    (swap! circuits assoc id {:circuit compiled-view :state c-state})
+    (swap! circuits assoc id {:circuit compiled-circuit :state c-state})
     (swap! subscriptions assoc id [])))
 
 
@@ -141,11 +125,12 @@
 
   This function processes the transaction through all registered views and
   recursively applies any derived transactions until a fixed point is reached."
-  [conn tx-data]
-  (let [{:keys [tx-data] :as ret} (ds/transact! conn tx-data)
+  [tx]
+  (assert (some? @data-source) "No data source set!")
+  (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
         new-tx (process-tx ::views tx-data)]
     (if (seq new-tx)
-      (transact conn new-tx)
+      (transact new-tx)
       ret)))
 
 
@@ -159,7 +144,7 @@
     A set of tuples representing the current view state, or nil if the view
     doesn't exist."
   [id]
-  (get-in @circuits [id :view]))
+  (c.state/get-view (get-in @circuits [id :state])))
 
 (defn subscribe-to-view
   "Subscribes a callback function to changes in a view.
@@ -200,17 +185,21 @@
   (reset! subscriptions {})
   (reset! circuits {}))
 
+(def datomic-source d.src/datomic-source)
+
 (defn load-from-conf [{:wizard/keys [workspace-dir circuits] :as conf}]
   (config/ensure-config-valid conf)
   (let [main-path (Paths/get (URI/create (str "file://" workspace-dir)))
         edn-path (.resolve ^Path main-path "definitions")
+        circuits-path (.resolve ^Path main-path "circuits")
         data-path (.resolve ^Path main-path "data")]
-    (doseq [path [main-path edn-path data-path]]
+    (doseq [path [main-path edn-path data-path circuits-path]]
       (Files/createDirectories
        path (into-array
              [(PosixFilePermissions/asFileAttribute
                (PosixFilePermissions/fromString "rwxr-xr--"))])))
-    (doseq [[c-name {:wizard.circuit/keys [query rules]}] circuits]
+    (doseq [[c-name {:wizard.circuit/keys [query rules] :wizard.storage/keys [type]}]
+            circuits]
       (let [c-data-path (.resolve ^Path data-path (name c-name))
             c-edn-path (.resolve ^Path edn-path (str (name c-name) ".edn"))
             data-exists? (Files/exists c-data-path (into-array LinkOption []))
@@ -230,7 +219,11 @@
                       [(PosixFilePermissions/asFileAttribute
                         (PosixFilePermissions/fromString "rwxr-xr--"))])))
         (add-compiled-view
-         c-name circuit (eval `(impl-inline/reify-circuit ~circuit)) data-path-str)))))
+         {:id c-name
+          :circuit circuit
+          :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
+          :storage-type type
+          :data-dir data-path-str})))))
 
 
 (comment
