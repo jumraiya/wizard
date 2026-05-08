@@ -55,8 +55,7 @@
   (datoms [_this index c1 c2 c3]
     (d/datoms (d/db (:conn ctx)) index c1 c2 c3))
   (datoms-since-tx-id [_ tx-id]
-    (let [t (d/tx->t tx-id)]
-      (d/datoms (d/since (d/db (:conn ctx)) t) :eavt))))
+    (mapcat :data (d/tx-range (d/log (:conn ctx)) tx-id nil))))
 
 (defn datomic-source [db-conn]
   (->DatomicSource {:conn db-conn}))

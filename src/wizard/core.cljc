@@ -119,6 +119,7 @@
                            to-process)
                           to-process)
              {:keys [circuit state]} (get @circuits circuit-id)]
+         (prn to-process)
          (circuit state to-process)
          (if-let [remaining (seq (drop 1000 datoms))]
            (recur remaining)
@@ -282,24 +283,43 @@
     @(d/transact conn movie-schema)
     @(d/transact conn first-movies))
 
-  (d/q '[:find ?title
-         :where
-         [?movie :movie/title ?title]
-         [?movie :movie/genre "action/adventure"]
-         [?movie :movie/release-year ?year]
-         [(>= ?year 1980)]]
-       (d/db conn))
+  (def query
+    '[:find ?title
+      :where
+      [?movie :movie/title ?title]
+      [?movie :movie/genre "action/adventure"]
+      [?movie :movie/release-year ?year]
+      [(>= ?year 1980)]])
+
+  (d/q query (d/db conn))
+
+  (def config
+    {:wizard/workspace-dir "/tmp/my-circuits"
+     :wizard/circuits
+     {:action-movies-1980s
+      {:wizard.circuit/name "1980s Action"
+       ;:wizard.storage/type :wizard.storage/rocksdb
+       :wizard.circuit/query query}}})
+
   (def d-source (wizard.core/datomic-source conn))
   (wizard.core/set-data-source! d-source)
   (wizard.core/load-from-conf config)
   (wizard.data-source/get-source-type d-source)
   (wizard.core/sync-view :action-movies-1980s d-source)
   (wizard.core/get-view :action-movies-1980s)
-  (d/transact
-   conn
-   [{:movie/title "Predator"
-     :movie/genre "action/adventure"
-     :movie/release-year 1987}])
-  (wizard.core/sync-view :action-movies-1980s data-source)
-  ;; include predator
-  (wizard.core/get-view :action-movies-1980s))
+  (let [goonies-id (d/q '[:find ?id . :where [?id :movie/title "The Goonies"]] (d/db conn))]
+    (d/transact
+     conn
+     [{:movie/title "Predator"
+       :movie/genre "action/adventure"
+       :movie/release-year 1987}
+      [:db/add goonies-id :movie/genre "adventure"]]))
+  (wizard.core/sync-view :action-movies-1980s d-source)
+  ;; includes predator, excludes goonies
+  (wizard.core/get-view :action-movies-1980s)
+
+
+  (first (d/tx-range (d/log conn) 13194139534317 nil)))
+
+
+
