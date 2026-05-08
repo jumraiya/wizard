@@ -1,11 +1,26 @@
 (ns wizard.rocksdb.core
-  (:require [wizard.codec :as codec]
-            [wizard.zset :as zs]
-            [clojure.java.io :as io])
-  (:import (org.rocksdb RocksDB BloomFilter Options WriteBatch WriteOptions
-                        ColumnFamilyOptions ColumnFamilyDescriptor DBOptions
-                        BlockBasedTableConfig ReadOptions RocksIterator Slice)
-           (java.util Arrays ArrayList)))
+  (:require
+    [clojure.java.io :as io]
+    [wizard.codec :as codec]
+    [wizard.zset :as zs])
+  (:import
+    (java.util
+      ArrayList
+      Arrays)
+    (org.rocksdb
+      BlockBasedTableConfig
+      BloomFilter
+      ColumnFamilyDescriptor
+      ColumnFamilyOptions
+      DBOptions
+      Options
+      ReadOptions
+      RocksDB
+      RocksIterator
+      Slice
+      WriteBatch
+      WriteOptions)))
+
 
 (defn open-db
   ([dir]
@@ -18,21 +33,21 @@
                 (.setCreateMissingColumnFamilies true)
                 (.setMaxBackgroundJobs 10)
                 ;; (.setDbWriteBufferSize (* 1024 1024 1024 10))
-                                        ;(.setTableFormatConfig table-options)
-                                        ;(.useCappedPrefixExtractor prefix-len)
+                ;; (.setTableFormatConfig table-options)
+                ;; (.useCappedPrefixExtractor prefix-len)
                 )
 
          [col-families col-descs] (when col-families
                                     [(into [{:col-name :default}]
                                            col-families)
                                      (into
-                                      [(ColumnFamilyDescriptor.
-                                        RocksDB/DEFAULT_COLUMN_FAMILY
-                                        (or col-options (ColumnFamilyOptions.)))]
-                                      (mapv #(ColumnFamilyDescriptor.
-                                              (.getBytes (name (:col-name %)))
-                                              (ColumnFamilyOptions.))
-                                            col-families))])
+                                       [(ColumnFamilyDescriptor.
+                                          RocksDB/DEFAULT_COLUMN_FAMILY
+                                          (or col-options (ColumnFamilyOptions.)))]
+                                       (mapv #(ColumnFamilyDescriptor.
+                                                (.getBytes (name (:col-name %)))
+                                                (ColumnFamilyOptions.))
+                                             col-families))])
          col-handles (ArrayList.)
          db (cond
               col-descs (RocksDB/open (DBOptions. opts) dir col-descs col-handles)
@@ -43,18 +58,24 @@
                                 [(name col-name) (.get col-handles idx)]))
                          (map-indexed vector col-families))})))
 
-(defn put [{:keys [db col-handles]} k v & [col-name]]
+
+(defn put
+  [{:keys [db col-handles]} k v & [col-name]]
   (if col-name
     (.put db (get col-handles (name col-name)) (codec/encode k) (codec/encode [v]))
     (.put db (codec/encode k) (codec/encode [v]))))
 
-(defn getv [{:keys [db col-handles]} k & [col-name]]
+
+(defn getv
+  [{:keys [db col-handles]} k & [col-name]]
   (first (some-> (if col-name
                    (.get db (get col-handles (name col-name)) (codec/encode k))
                    (.get db (codec/encode k)))
                  codec/decode)))
 
-(defn batch-update [ctx {:keys [puts dels]} & [opts]]
+
+(defn batch-update
+  [ctx {:keys [puts dels]} & [opts]]
   (with-open [batch (WriteBatch.)]
     (doseq [[k v] puts]
       (.put batch (codec/encode k) [(codec/encode-val v)]))
@@ -63,7 +84,8 @@
     (.write (:db ctx) (or opts (WriteOptions.)) batch)))
 
 
-(defn batch-update-cols [ctx col-updates & [opts]]
+(defn batch-update-cols
+  [ctx col-updates & [opts]]
   (with-open [batch (WriteBatch.)]
     (doseq [[col {:keys [puts dels]}] col-updates]
       (doseq [[k v] puts]
@@ -72,9 +94,11 @@
       (doseq [k dels]
         (.delete batch (-> ctx :col-handles (get (name col)))
                  (codec/encode k))))
-    (.write (:db ctx) (or opts (doto (WriteOptions.) (.disableWAL))) batch)))
+    (.write (:db ctx) (or opts (WriteOptions.)) batch)))
 
-(defn- get-prefix-upper-bound [prefix-bytes]
+
+(defn- get-prefix-upper-bound
+  [prefix-bytes]
   (loop [i (-> prefix-bytes alength dec)]
     (if (not= 0xFF (aget prefix-bytes i))
       (let [bound (Arrays/copyOfRange prefix-bytes 0 (inc i))]
@@ -83,7 +107,9 @@
       (when (> i 0)
         (recur (dec i))))))
 
-(defn prefix-slice [{:keys [db col-handles]} prefix & [col-name]]
+
+(defn prefix-slice
+  [{:keys [db col-handles]} prefix & [col-name]]
   (let [prefix-bytes (codec/encode prefix)
         res (transient [])]
     (with-open [upper-bound (get-prefix-upper-bound prefix-bytes)
@@ -101,7 +127,9 @@
         (.next it)))
     (persistent! res)))
 
-(defn get-all [{:keys [db col-handles]} & [col-name]]
+
+(defn get-all
+  [{:keys [db col-handles]} & [col-name]]
   (let [res (transient [])]
     (with-open [read-opts (ReadOptions.)
                 it ^RocksIterator (if col-name
@@ -113,6 +141,7 @@
                     (first (codec/decode (.value it)))])
         (.next it)))
     (persistent! res)))
+
 
 ;; (defn prefix-slice [db prefix]
 ;;   (let [encoded (codec/encode prefix)
@@ -140,22 +169,26 @@
 ;;       (persistent! res))))
 
 
-(defn create-column-family [db col-name]
+(defn create-column-family
+  [db col-name]
   (.createColumnFamily
-   db
-   (ColumnFamilyDescriptor. (.getBytes (if (or (keyword? col-name)
-                                               (symbol? col-name))
-                                         (name col-name)
-                                         col-name))
-                            (ColumnFamilyOptions.))))
+    db
+    (ColumnFamilyDescriptor. (.getBytes (if (or (keyword? col-name)
+                                                (symbol? col-name))
+                                          (name col-name)
+                                          col-name))
+                             (ColumnFamilyOptions.))))
 
-(defn multi-get [^RocksDB db ks]
+
+(defn multi-get
+  [^RocksDB db ks]
   (let [byte-keys (java.util.ArrayList. ^java.util.Collection
                    (mapv codec/encode ks))
         results (.multiGetAsList db byte-keys)]
     (into {}
           (keep (fn [[k v]] (when v [k (first (codec/decode v))])))
           (map vector ks results))))
+
 
 (comment
   (def ctx (open-db "/tmp/rocksdb"

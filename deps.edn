@@ -1,11 +1,11 @@
 {:paths ["src" "."]
  :deps {datascript/datascript {:mvn/version "1.7.8"}
         org.replikativ/persistent-sorted-set {:mvn/version "0.4.122"}
-        ;net.clojars.jumraiya/caudex {:local/root "../caudex"}
+        ;; net.clojars.jumraiya/caudex {:local/root "../caudex"}
         datalevin/datalevin {:mvn/version "0.10.7"}
         com.datomic/peer {:mvn/version "1.0.7556"}
         prismatic/schema {:mvn/version "1.4.1"}
-        net.clojars.jumraiya/caudex {:mvn/version "0.1.3"}
+        net.clojars.jumraiya/caudex {:mvn/version "0.1.31"}
         org.rocksdb/rocksdbjni {:mvn/version "10.8.3"}
         org.lmdbjava/lmdbjava {:mvn/version "0.9.3"}}
 
@@ -15,10 +15,10 @@
 
            :dev {:extra-paths ["test" "examples"]
                  :extra-deps {thheller/shadow-cljs {:mvn/version "3.3.6"}
-                              ;org.clojure/clojurescript {:mvn/version "1.11.54"}
+                              ;; org.clojure/clojurescript {:mvn/version "1.11.54"}
                               com.datomic/peer {:mvn/version "1.0.7394"}
                               com.clojure-goes-fast/clj-async-profiler {:mvn/version "2.0.0-beta1"}
-                              com.github.flow-storm/flow-storm-dbg {:mvn/version "4.4.3"}
+                              com.github.flow-storm/flow-storm-dbg {:mvn/version "4.5.9"}
                               criterium/criterium {:mvn/version "0.4.6"}}
                  :jvm-opts ["-Djdk.attach.allowAttachSelf"]}
            :compile-circuits {:main-opts ["-m" "wizard.compile"]}
@@ -64,6 +64,6 @@
            ;; Include all paths you want available for development
            :nrepl {:extra-paths ["test"]
                    :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
-		   ;; this allows nrepl to interrupt runaway repl evals
+                   ;; this allows nrepl to interrupt runaway repl evals
                    :jvm-opts ["-Djdk.attach.allowAttachSelf"]
                    :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}}}

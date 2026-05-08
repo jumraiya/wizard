@@ -1,22 +1,31 @@
 (ns wizard.core
-  (:require [caudex.circuit :as c]
-            [wizard.config :as config]
-            [wizard.circuit-impl :as c.impl]
-            [caudex.utils :as c.utils]
-            [clojure.edn :as edn]
-            [clojure.string :as str]
-            [wizard.data-source :as d.src]
-            [wizard.circuit-impl-inline :as impl-inline]
-            [clojure.pprint :as pp]
-            [clojure.walk :as walk]
-            #?(:clj [wizard.lmdb.circuit-state :as l])
-            [datomic.api :as d]
-            #?(:clj [wizard.rocksdb.circuit-state :as r])
-            [wizard.circuit.state :as c.state]
-            [datascript.core :as ds])
-  (:import (java.net URI)
-           (java.nio.file Path Paths Files LinkOption)
-           (java.nio.file.attribute PosixFilePermissions)))
+  (:require
+    [caudex.circuit :as c]
+    [caudex.utils :as c.utils]
+    [clojure.edn :as edn]
+    [clojure.pprint :as pp]
+    [clojure.string :as str]
+    [clojure.walk :as walk]
+    [datascript.core :as ds]
+    [datomic.api :as d]
+    [wizard.circuit-impl :as c.impl]
+    [wizard.circuit-impl-inline :as impl-inline]
+    [wizard.circuit.state :as c.state]
+    [wizard.config :as config]
+    [wizard.data-source :as d.src]
+    #?(:clj [wizard.lmdb.circuit-state :as l])
+    #?(:clj [wizard.rocksdb.circuit-state :as r]))
+  (:import
+    (java.net
+      URI)
+    (java.nio.file
+      Files
+      LinkOption
+      Path
+      Paths)
+    (java.nio.file.attribute
+      PosixFilePermissions)))
+
 
 (defonce ^:private data-source (atom nil))
 
@@ -28,46 +37,51 @@
 
 #?(:clj (set! *warn-on-reflection* true))
 
-(defn- process-tx [_id tx-data]
-  (reduce
-   (fn [tx [id {:keys [circuit view state]}]]
-     (let [output (if (some? state)
-                    (circuit state tx-data)
-                    (circuit tx-data))
-           asserts (into []
-                         (comp
-                          (filter #(true? (last %)))
-                          (map butlast)
-                          (map vec))
-                         output)
-           retracts (into []
-                          (comp
-                           (filter #(false? (last %)))
-                           (map butlast)
-                           (map vec))
-                          output)
-           view (reduce
-                 conj
-                 (reduce
-                  disj
-                  view
-                  retracts)
-                 asserts)]
-       (swap! circuits update id
-              (fn [{:keys [diffs] :as data}]
-                (assoc data :view view :diffs (conj diffs output))))
-       (into
-        tx
-        (when-not (empty? output)
-          (reduce
-           #(into %1 (%2 asserts retracts view))
-           []
-           (get @subscriptions id))))))
-   []
-   @circuits))
 
-(defn set-data-source! [source]
+(defn- process-tx
+  [_id tx-data]
+  (reduce
+    (fn [tx [id {:keys [circuit view state]}]]
+      (let [output (if (some? state)
+                     (circuit state tx-data)
+                     (circuit tx-data))
+            asserts (into []
+                          (comp
+                            (filter #(true? (last %)))
+                            (map butlast)
+                            (map vec))
+                          output)
+            retracts (into []
+                           (comp
+                             (filter #(false? (last %)))
+                             (map butlast)
+                             (map vec))
+                           output)
+            view (reduce
+                   conj
+                   (reduce
+                     disj
+                     view
+                     retracts)
+                   asserts)]
+        (swap! circuits update id
+               (fn [{:keys [diffs] :as data}]
+                 (assoc data :view view :diffs (conj diffs output))))
+        (into
+          tx
+          (when-not (empty? output)
+            (reduce
+              #(into %1 (%2 asserts retracts view))
+              []
+              (get @subscriptions id))))))
+    []
+    @circuits))
+
+
+(defn set-data-source!
+  [source]
   (reset! data-source source))
+
 
 (defn add-view
   [id query
@@ -95,10 +109,10 @@
               (c.state/get-view state))))))))
 
 
-(defn get-last-processed-tx [circuit-id]
+(defn get-last-processed-tx
+  [circuit-id]
   (c.state/get-last-processed-tx
-   (get-in @circuits [circuit-id :state])))
-
+    (get-in @circuits [circuit-id :state])))
 
 
 (defn sync-view
@@ -114,20 +128,24 @@
        (let [to-process (take 1000 datoms)
              to-process (if (= :datomic (d.src/get-source-type data-source))
                           (mapv
-                           (fn [[e a v tx added?]]
-                             [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
-                           to-process)
+                            (fn [[e a v tx added?]]
+                              [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
+                            to-process)
                           to-process)
              {:keys [circuit state]} (get @circuits circuit-id)]
-         (prn to-process)
          (circuit state to-process)
          (if-let [remaining (seq (drop 1000 datoms))]
            (recur remaining)
            (c.state/get-view state)))))))
 
-(defn add-compiled-view [{:keys [id circuit compiled-circuit data-dir storage-type]}
-                         & {:keys [args] :or {args {}}}]
-  (let [c-state #?(:clj (case storage-type
+
+(defn add-compiled-view
+  [{:keys [id circuit compiled-circuit data-dir storage-type]}
+   & {:keys [args] :or {args {}}}]
+  (let [prev-state (get-in @circuits [id :state])
+        _ (when prev-state
+            (c.state/close prev-state))
+        c-state #?(:clj (case storage-type
                           :wizard.storage/lmdb
                           (l/lmdb-state data-dir circuit)
                           :wizard.storage/rocksdb
@@ -171,6 +189,7 @@
   [id]
   (c.state/get-view (get-in @circuits [id :state])))
 
+
 (defn subscribe-to-view
   "Subscribes a callback function to changes in a view.
 
@@ -185,6 +204,7 @@
     - view:     The complete current view state"
   [id callback]
   (swap! subscriptions update id #(conj % callback)))
+
 
 (defn add+subscribe-to-view
   "Creates a view and immediately subscribes a callback to it.
@@ -201,6 +221,7 @@
   (apply add-view conn id query args)
   (subscribe-to-view id callback))
 
+
 (defn reset-all
   "Resets all views and subscriptions to empty state.
 
@@ -210,9 +231,12 @@
   (reset! subscriptions {})
   (reset! circuits {}))
 
+
 (def datomic-source d.src/datomic-source)
 
-(defn load-from-conf [{:wizard/keys [workspace-dir circuits] :as conf}]
+
+(defn load-from-conf
+  [{:wizard/keys [workspace-dir circuits] :as conf}]
   (config/ensure-config-valid conf)
   (let [main-path (Paths/get (URI/create (str "file://" workspace-dir)))
         edn-path (.resolve ^Path main-path "definitions")
@@ -220,9 +244,9 @@
         data-path (.resolve ^Path main-path "data")]
     (doseq [path [main-path edn-path data-path circuits-path]]
       (Files/createDirectories
-       path (into-array
-             [(PosixFilePermissions/asFileAttribute
-               (PosixFilePermissions/fromString "rwxr-xr--"))])))
+        path (into-array
+               [(PosixFilePermissions/asFileAttribute
+                  (PosixFilePermissions/fromString "rwxr-xr--"))])))
     (doseq [[c-name {:wizard.circuit/keys [query rules] :wizard.storage/keys [type]}]
             circuits]
       (let [c-data-path (.resolve ^Path data-path (name c-name))
@@ -240,15 +264,15 @@
           (spit edn-path-str (pr-str (c.utils/circuit->edn circuit))))
         (when (not data-exists?)
           (Files/createDirectories
-           data-path (into-array
-                      [(PosixFilePermissions/asFileAttribute
-                        (PosixFilePermissions/fromString "rwxr-xr--"))])))
+            data-path (into-array
+                        [(PosixFilePermissions/asFileAttribute
+                           (PosixFilePermissions/fromString "rwxr-xr--"))])))
         (add-compiled-view
-         {:id c-name
-          :circuit circuit
-          :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
-          :storage-type type
-          :data-dir data-path-str})))))
+          {:id c-name
+           :circuit circuit
+           :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
+           :storage-type type
+           :data-dir data-path-str})))))
 
 
 (comment
@@ -279,6 +303,7 @@
                         :movie/release-year 1984}])
     (def uri "datomic:mem://mbrainz-1968-1973")
     (d/create-database uri)
+    ;(d/delete-database uri)
     (def conn (d/connect uri))
     @(d/transact conn movie-schema)
     @(d/transact conn first-movies))
@@ -298,13 +323,12 @@
      :wizard/circuits
      {:action-movies-1980s
       {:wizard.circuit/name "1980s Action"
-       ;:wizard.storage/type :wizard.storage/rocksdb
+       :wizard.storage/type :wizard.storage/rocksdb
        :wizard.circuit/query query}}})
 
   (def d-source (wizard.core/datomic-source conn))
   (wizard.core/set-data-source! d-source)
   (wizard.core/load-from-conf config)
-  (wizard.data-source/get-source-type d-source)
   (wizard.core/sync-view :action-movies-1980s d-source)
   (wizard.core/get-view :action-movies-1980s)
   (let [goonies-id (d/q '[:find ?id . :where [?id :movie/title "The Goonies"]] (d/db conn))]
@@ -317,9 +341,4 @@
   (wizard.core/sync-view :action-movies-1980s d-source)
   ;; includes predator, excludes goonies
   (wizard.core/get-view :action-movies-1980s)
-
-
-  (first (d/tx-range (d/log conn) 13194139534317 nil)))
-
-
-
+  (wizard.core/get-last-processed-tx :action-movies-1980s))
