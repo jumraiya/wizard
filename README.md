@@ -55,11 +55,10 @@ For each circuit there are two artifacts created: a definition of the structure 
                         :movie/genre "punk dystopia"
                         :movie/release-year 1984}])
     (def uri "datomic:mem://mbrainz-1968-1973")
-    (d/create-database uri)
-    (def conn (d/connect uri))
-    (def d-source (wizard.core/datomic-source conn))
-    @(d/transact conn movie-schema)
-    @(d/transact conn first-movies))
+    (datomic.api/create-database uri)
+    (def conn (datomic.api/connect uri))
+    @(datomic.api/transact conn movie-schema)
+    @(datomic.api/transact conn first-movies))
 
   (def query
     '[:find ?title
@@ -77,12 +76,12 @@ For each circuit there are two artifacts created: a definition of the structure 
        :wizard.storage/type :wizard.storage/rocksdb
        :wizard.circuit/query query}}})
 
-  (wizard.core/set-data-source! d-source)
+  (def d-source (wizard.core/datomic-source conn))
   (wizard.core/load-from-conf config)
   (wizard.core/sync-view :action-movies-1980s d-source)
 
  (assert
-  (= (wizard.core/get-view :action-movies-1980s)
+  (= (set (wizard.core/get-view :action-movies-1980s))
      (d/q query (d/db conn))))
 ```
 
