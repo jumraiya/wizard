@@ -21,7 +21,6 @@
                               com.github.flow-storm/flow-storm-dbg {:mvn/version "4.5.9"}
                               criterium/criterium {:mvn/version "0.4.6"}}
                  :jvm-opts ["-Djdk.attach.allowAttachSelf"]}
-           :compile-circuits {:main-opts ["-m" "wizard.compile"]}
 
            :test {:extra-paths ["test"]
                   :jvm-opts ["--add-opens=java.base/java.nio=ALL-UNNAMED"
@@ -49,16 +48,6 @@
                              :exec-fn benchmark.datalevin.wizard/-main
                              :extra-deps
                              {datalevin/datalevin {:mvn/version "0.10.7"}}}
-           :datalevin-test {:exec-fn benchmark.datalevin.wizard/test-bench}
-           :datascript-bench {:extra-paths ["."]
-                              :jvm-opts ["-server"
-                                         "-XX:+UnlockDiagnosticVMOptions"
-                                         "-Djdk.attach.allowAttachSelf"
-                                         "-XX:+DebugNonSafepoints"]
-                              :main-opts ["-m" "benchmark.datascript.wizard"]
-                              :extra-deps
-                              {metosin/jsonista {:mvn/version "0.3.3"}
-                               io.github.tonsky/duti {:git/sha "e36d65296a4f9758664309ec35b00887e88c405a"}}}
 
            ;; nREPL server for AI to connect to
            ;; Include all paths you want available for development
