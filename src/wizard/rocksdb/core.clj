@@ -127,7 +127,6 @@
         (.next it)))
     (persistent! res)))
 
-
 (defn get-all
   [{:keys [db col-handles]} & [col-name]]
   (let [res (transient [])]

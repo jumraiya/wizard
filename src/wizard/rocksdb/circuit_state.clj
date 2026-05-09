@@ -3,6 +3,7 @@
     [caudex.dbsp :as dbsp]
     [caudex.graph :as g]
     [caudex.utils :as c.utils]
+    [clojure.core.reducers :as r]
     [org.replikativ.persistent-sorted-set :as sset]
     [wizard.circuit.state :as st]
     [wizard.rocksdb.core :as rocksdb]
@@ -28,19 +29,17 @@
 
 
 (defrecord RocksDBState
-  [ctx opts]
+           [ctx opts]
 
   st/CircuitState
 
   (init-tx [_] {})
-
 
   (getv
     [_this op-id]
     (into []
           (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
           (rocksdb/get-all ctx op-id)))
-
 
   (getv
     [_this tx op-id]
@@ -49,14 +48,12 @@
         (get-op-state ctx tx (:ref-op-id v))
         v)))
 
-
   (slice
     [_this op-id lookup-key]
     (let [lk (filterv #(not= :* %) lookup-key)]
       (into (sset/sorted-set)
             (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
             (rocksdb/prefix-slice ctx lk op-id))))
-
 
   (slice
     [_this tx op-id lookup-key]
@@ -80,81 +77,73 @@
             (st/merge-delta base deltas)
             base)))))
 
-
   (put [_ tx op-id zset] (assoc tx op-id zset))
-
 
   (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
 
-
   (commit
     [_this tx]
-    (let [commits (mapv
-                    (fn [[op-id delta]]
-                      (future
-                        (let [upd (reduce
-                                    (fn [batch row]
-                                      (let [cur-wt (rocksdb/getv ctx (:tuple row) op-id)]
-                                        (if (:initializing? opts)
-                                          (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
-                                          (cond
-                                            (nil? cur-wt)
-                                            (update-in batch [op-id :puts] #(conj (or % []) [(:tuple row) (:wt row)]))
-                                            (not= cur-wt (:wt row))
-                                            (update-in batch [op-id :dels] #(conj (or % []) (:tuple row)))))))
-                                    {op-id {:puts [] :dels []}}
-                                    delta)]
-                          (rocksdb/batch-update-cols ctx upd))))
-                    (:deltas tx))
+    (let [commits (reduce
+                   (fn [commits [op-id delta]]
+                     (conj
+                      commits
+                      [op-id
+                       (reduce
+                        (fn [batch row]
+                          (let [cur-wt (rocksdb/getv ctx (:tuple row) op-id)]
+                            (if (:initializing? opts)
+                              (update batch :puts #(conj % [(:tuple row) (:wt row)]))
+                              (cond
+                                (nil? cur-wt)
+                                (update batch :puts #(conj % [(:tuple row) (:wt row)]))
+                                (not= cur-wt (:wt row))
+                                (update batch :dels #(conj % (:tuple row)))))))
+                        {:puts [] :dels []}
+                        delta)]))
+                   {}
+                   (:deltas tx))
           batch-update (when (:debug? opts)
                          (reduce
-                           (fn [b [op-id data]]
-                             (if (and (contains? (:col-handles ctx) (name op-id))
-                                      (not (contains? (:deltas tx) op-id)))
-                               (let [ref-state (when (instance? OpStateRef data)
-                                                 (into []
-                                                       (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
-                                                       (rocksdb/get-all ctx (:ref-op-id data))))
-                                     new (into {} (map
-                                                    #(vector (:tuple %) (:wt %)))
-                                               (if ref-state
-                                                 ref-state
-                                                 data))
-                                     old  (into {} (rocksdb/get-all ctx op-id))]
-                                 (reduce
-                                   (fn [b [k]]
-                                     (if (not (contains? new k))
-                                       (update-in b [op-id :dels] #(conj (or % []) k))
-                                       b))
-                                   (assoc-in b [op-id :puts] new)
-                                   old))
-                               b))
-                           {}
-                           tx))]
-      (run!
-        deref
-        (conj commits
-              (future
-                (let [tx-id (some-> tx :tx-data last (nth 3))]
-                  (rocksdb/batch-update-cols
-                    ctx
+                          (fn [b [op-id data]]
+                            (if (and (contains? (:col-handles ctx) (name op-id))
+                                     (not (contains? (:deltas tx) op-id)))
+                              (let [ref-state (when (instance? OpStateRef data)
+                                                (into []
+                                                      (map (fn [[k v]] (zs/->ZSetVecEntry k v)))
+                                                      (rocksdb/get-all ctx (:ref-op-id data))))
+                                    new (into {} (map
+                                                  #(vector (:tuple %) (:wt %)))
+                                              (if ref-state
+                                                ref-state
+                                                data))
+                                    old  (into {} (rocksdb/get-all ctx op-id))]
+                                (reduce
+                                 (fn [b [k]]
+                                   (if (not (contains? new k))
+                                     (update-in b [op-id :dels] #(conj (or % []) k))
+                                     b))
+                                 (assoc-in b [op-id :puts] new)
+                                 old))
+                              b))
+                          {}
+                          tx))]
+      (rocksdb/batch-update-cols
+       ctx (conj commits
+                 (let [tx-id (some-> tx :tx-data last (nth 3))]
+                   [:default
                     (cond->
-                      (reduce
-                        (fn [batch row]
-                          (let [cur-wt (rocksdb/getv ctx (:tuple row) :default)]
-                            (cond
-                              (nil? cur-wt) (update-in batch [:default :puts]
-                                                       #(conj (or % []) [(:tuple row) true]))
-                              (not= cur-wt (:wt row)) (update-in batch [:default :dels] #(conj (or % []) (:tuple row))))))
-                        {}
-                        (eduction
-                          (filter #(true? (:wt %)))
-                          (get tx (:output-op opts))))
-                      tx-id (update-in [:default :puts] #(conj (or % []) [[:last-processed-tx] tx-id]))))))))
+                     (reduce
+                      (fn [batch row]
+                        (let [cur-wt (rocksdb/getv ctx (:tuple row) :default)]
+                          (cond
+                            (nil? cur-wt) (update batch :puts #(conj %  [(:tuple row) true]))
+                            (not= cur-wt (:wt row)) (update batch :dels #(conj % (:tuple row))))))
+                      {:puts [] :dels []}
+                      (get tx (:output-op opts)))
+                      tx-id (update :puts #(conj %  [[:last-processed-tx] tx-id])))])))
 
       (when batch-update
         (rocksdb/batch-update-cols ctx batch-update))))
-
 
   (get-view
     [_this]
@@ -163,11 +152,9 @@
                 (remove #(= [:last-processed-tx] %)))
           (rocksdb/get-all ctx :default)))
 
-
   (get-last-processed-tx
     [_]
     (rocksdb/getv ctx [:last-processed-tx] :default))
-
 
   (close
     [_]

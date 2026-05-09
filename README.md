@@ -22,38 +22,68 @@ A circuit consumes datalog transactions in the EAVT format and updates the resul
 
 Circuits can be attached to listeners (basically an event handler). In the future I will probably add functionality to connect to pub/sub systems.
 
-For each circuit there are two artifacts created: an edn definition file, a clojure function generated from the latter which actually consumes the transactions and outputs the result.
+For each circuit there are two artifacts created: a definition of the structure in edn form and a data directory which contains the durable state of the circuit.
 
 
 ## Usage
 
-First we need to specify which database we are consuming data from. 
-
-In this case Datomic,
-
 ```clojure
-(require '[wizard.core :as w]
-         '[datomic.api :as d])
+;; Setup datomic database
+(do
+    (def movie-schema [{:db/ident :movie/title
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The title of the movie"}
 
-(w/set-data-source! 
-  (w/datomic-source (d/connect "datomic:dev://localhost:4334/mbrainz-1968-1973")))
-```
-similar adapters exist for Datalevin and Datascript.
+                       {:db/ident :movie/genre
+                        :db/valueType :db.type/string
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The genre of the movie"}
 
-A circuit can be constructed in two ways
+                       {:db/ident :movie/release-year
+                        :db/valueType :db.type/long
+                        :db/cardinality :db.cardinality/one
+                        :db/doc "The year the movie was released in theaters"}])
 
-During runtime, this might
-```clojure
-(require '[wizard.core :as w])
+    (def first-movies [{:movie/title "The Goonies"
+                        :movie/genre "action/adventure"
+                        :movie/release-year 1985}
+                       {:movie/title "Commando"
+                        :movie/genre "action/adventure"
+                        :movie/release-year 1985}
+                       {:movie/title "Repo Man"
+                        :movie/genre "punk dystopia"
+                        :movie/release-year 1984}])
+    (def uri "datomic:mem://mbrainz-1968-1973")
+    (d/create-database uri)
+    (def conn (d/connect uri))
+    (def d-source (wizard.core/datomic-source conn))
+    @(d/transact conn movie-schema)
+    @(d/transact conn first-movies))
 
-(w/add-view 
-```
+  (def query
+    '[:find ?title
+      :where
+      [?movie :movie/title ?title]
+      [?movie :movie/genre "action/adventure"]
+      [?movie :movie/release-year ?year]
+      [(>= ?year 1980)]])
 
+  (def config
+    {:wizard/workspace-dir "/tmp/my-circuits"
+     :wizard/circuits
+     {:action-movies-1980s
+      {:wizard.circuit/name "1980s Action"
+       :wizard.storage/type :wizard.storage/rocksdb
+       :wizard.circuit/query query}}})
 
-```clojure
-(require '[wizard.core :as w])
+  (wizard.core/set-data-source! d-source)
+  (wizard.core/load-from-conf config)
+  (wizard.core/sync-view :action-movies-1980s d-source)
 
-(w/load
+ (assert
+  (= (wizard.core/get-view :action-movies-1980s)
+     (d/q query (d/db conn))))
 ```
 
 

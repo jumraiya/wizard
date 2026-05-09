@@ -138,6 +138,27 @@
            (recur remaining)
            (c.state/get-view state)))))))
 
+(defn sync-all-views
+  ([]
+   (sync-all-views @data-source))
+  ([data-source]
+   (future
+     (doseq [[circuit-id {:keys [circuit state]}] @circuits]
+       (let [last-processed (get-last-processed-tx circuit-id)]
+        (loop [datoms (if last-processed
+                        (d.src/datoms-since-tx-id data-source last-processed)
+                        (d.src/datoms data-source :eavt))]
+          (let [to-process (take 1000 datoms)
+                to-process (if (= :datomic (d.src/get-source-type data-source))
+                             (mapv
+                              (fn [[e a v tx added?]]
+                                [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
+                              to-process)
+                             to-process)]
+            (circuit state to-process)
+            (if-let [remaining (seq (drop 1000 datoms))]
+              (recur remaining)
+              true))))))))
 
 (defn add-compiled-view
   [{:keys [id circuit compiled-circuit data-dir storage-type]}
@@ -331,6 +352,7 @@
   (wizard.core/load-from-conf config)
   (wizard.core/sync-view :action-movies-1980s d-source)
   (wizard.core/get-view :action-movies-1980s)
+
   (let [goonies-id (d/q '[:find ?id . :where [?id :movie/title "The Goonies"]] (d/db conn))]
     (d/transact
      conn
@@ -340,5 +362,4 @@
       [:db/add goonies-id :movie/genre "adventure"]]))
   (wizard.core/sync-view :action-movies-1980s d-source)
   ;; includes predator, excludes goonies
-  (wizard.core/get-view :action-movies-1980s)
-  (wizard.core/get-last-processed-tx :action-movies-1980s))
+  (wizard.core/get-view :action-movies-1980s))
