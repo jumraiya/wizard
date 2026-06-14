@@ -1,26 +1,27 @@
 (ns wizard.core
   (:require
-    [caudex.circuit :as c]
-    [caudex.utils :as c.utils]
-    [clojure.edn :as edn]
-    [datomic.api :as d]
-    [wizard.circuit-impl :as c.impl]
-    [wizard.circuit-impl-inline :as impl-inline]
-    [wizard.circuit.state :as c.state]
-    [wizard.config :as config]
-    [wizard.data-source :as d.src]
-    #?(:clj [wizard.lmdb.circuit-state :as l])
-    #?(:clj [wizard.rocksdb.circuit-state :as r]))
-  (:import
-    (java.net
-      URI)
-    (java.nio.file
-      Files
-      LinkOption
-      Path
-      Paths)
-    (java.nio.file.attribute
-      PosixFilePermissions)))
+   [caudex.circuit :as c]
+   [caudex.utils :as c.utils]
+   [clojure.edn :as edn]
+   #?(:clj [datomic.api :as d])
+   [wizard.circuit-impl :as c.impl]
+   [wizard.circuit-impl-inline :as impl-inline]
+   [wizard.circuit.state :as c.state]
+   [wizard.config :as config]
+   [wizard.data-source :as d.src]
+   #?(:clj [wizard.lmdb.circuit-state :as l])
+   #?(:clj [wizard.rocksdb.circuit-state :as r]))
+  #?(:clj
+     (:import
+      (java.net
+       URI)
+      (java.nio.file
+       Files
+       LinkOption
+       Path
+       Paths)
+      (java.nio.file.attribute
+       PosixFilePermissions))))
 
 
 (defonce ^:private data-source (atom nil))
@@ -95,14 +96,16 @@
     (swap! circuits assoc id {:circuit compiled-circuit :state c-state})
     (swap! subscriptions assoc id [])
     (when sync?
-      (future
-        (loop [datoms (d.src/datoms @data-source :eavt)]
-          (let [to-process (take 1000 datoms)
-                {:keys [circuit state]} (get @circuits id)]
-            (circuit state to-process)
-            (if-let [remaining (seq (drop 1000 datoms))]
-              (recur remaining)
-              (c.state/get-view state))))))))
+      (let [sync-body (fn []
+                        (loop [datoms (d.src/datoms @data-source :eavt)]
+                          (let [to-process (take 1000 datoms)
+                                {:keys [circuit state]} (get @circuits id)]
+                            (circuit state to-process)
+                            (if-let [remaining (seq (drop 1000 datoms))]
+                              (recur remaining)
+                              (c.state/get-view state)))))]
+        #?(:clj (future (sync-body))
+           :cljs (sync-body))))))
 
 
 (defn get-last-processed-tx
@@ -117,44 +120,53 @@
   ([circuit-id data-source]
    (sync-view circuit-id data-source (get-last-processed-tx circuit-id)))
   ([circuit-id data-source last-processed]
-   (future
-     (loop [datoms (if last-processed
-                     (d.src/datoms-since-tx-id data-source last-processed)
-                     (d.src/datoms data-source :eavt))]
-       (let [to-process (take 1000 datoms)
-             to-process (if (= :datomic (d.src/get-source-type data-source))
-                          (mapv
-                            (fn [[e a v tx added?]]
-                              [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
-                            to-process)
-                          to-process)
-             {:keys [circuit state]} (get @circuits circuit-id)]
-         (circuit state to-process)
-         (if-let [remaining (seq (drop 1000 datoms))]
-           (recur remaining)
-           (c.state/get-view state)))))))
+   (let [sync-body
+         (fn []
+           (loop [datoms (if last-processed
+                           (d.src/datoms-since-tx-id data-source last-processed)
+                           (d.src/datoms data-source :eavt))]
+             (let [to-process (take 1000 datoms)
+                   to-process (if (= :datomic (d.src/get-source-type data-source))
+                                #?(:clj
+                                   (mapv
+                                    (fn [[e a v tx added?]]
+                                      [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
+                                    to-process)
+                                   :cljs [])
+                                to-process)
+                   {:keys [circuit state]} (get @circuits circuit-id)]
+               (circuit state to-process)
+               (if-let [remaining (seq (drop 1000 datoms))]
+                 (recur remaining)
+                 (c.state/get-view state)))))]
+     #?(:clj (future (sync-body))
+        :cljs (sync-body)))))
 
 (defn sync-all-views
   ([]
    (sync-all-views @data-source))
   ([data-source]
-   (future
-     (doseq [[circuit-id {:keys [circuit state]}] @circuits]
-       (let [last-processed (get-last-processed-tx circuit-id)]
-        (loop [datoms (if last-processed
-                        (d.src/datoms-since-tx-id data-source last-processed)
-                        (d.src/datoms data-source :eavt))]
-          (let [to-process (take 1000 datoms)
-                to-process (if (= :datomic (d.src/get-source-type data-source))
-                             (mapv
-                              (fn [[e a v tx added?]]
-                                [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
-                              to-process)
-                             to-process)]
-            (circuit state to-process)
-            (if-let [remaining (seq (drop 1000 datoms))]
-              (recur remaining)
-              true))))))))
+   (let [sync-body
+         (fn []
+           (doseq [[circuit-id {:keys [circuit state]}] @circuits]
+             (let [last-processed (get-last-processed-tx circuit-id)]
+               (loop [datoms (if last-processed
+                               (d.src/datoms-since-tx-id data-source last-processed)
+                               (d.src/datoms data-source :eavt))]
+                 (let [to-process (take 1000 datoms)
+                       to-process (if (= :datomic (d.src/get-source-type data-source))
+                                    #?(:clj (mapv
+                                             (fn [[e a v tx added?]]
+                                               [e (d/ident (d/db (-> data-source :ctx :conn)) a) v tx added?])
+                                             to-process)
+                                       :cljs [])
+                                    to-process)]
+                   (circuit state to-process)
+                   (if-let [remaining (seq (drop 1000 datoms))]
+                     (recur remaining)
+                     true))))))]
+     #?(:clj (future (sync-body))
+        :cljs (sync-body)))))
 
 (defn add-compiled-view
   [{:keys [id circuit compiled-circuit data-dir storage-type]}
@@ -249,47 +261,47 @@
   (reset! circuits {}))
 
 
-(def datomic-source d.src/datomic-source)
+#?(:clj (def datomic-source d.src/datomic-source))
 
-
-(defn load-from-conf
-  [{:wizard/keys [workspace-dir circuits] :as conf}]
-  (config/ensure-config-valid conf)
-  (let [main-path (Paths/get (URI/create (str "file://" workspace-dir)))
-        edn-path (.resolve ^Path main-path "definitions")
-        circuits-path (.resolve ^Path main-path "circuits")
-        data-path (.resolve ^Path main-path "data")]
-    (doseq [path [main-path edn-path data-path circuits-path]]
-      (Files/createDirectories
-        path (into-array
-               [(PosixFilePermissions/asFileAttribute
+#?(:clj
+   (defn load-from-conf
+     [{:wizard/keys [workspace-dir circuits] :as conf}]
+     (config/ensure-config-valid conf)
+     (let [main-path (Paths/get (URI/create (str "file://" workspace-dir)))
+           edn-path (.resolve ^Path main-path "definitions")
+           circuits-path (.resolve ^Path main-path "circuits")
+           data-path (.resolve ^Path main-path "data")]
+       (doseq [path [main-path edn-path data-path circuits-path]]
+         (Files/createDirectories
+          path (into-array
+                [(PosixFilePermissions/asFileAttribute
                   (PosixFilePermissions/fromString "rwxr-xr--"))])))
-    (doseq [[c-name {:wizard.circuit/keys [query rules] :wizard.storage/keys [type]}]
-            circuits]
-      (let [c-data-path (.resolve ^Path data-path (name c-name))
-            c-edn-path (.resolve ^Path edn-path (str (name c-name) ".edn"))
-            data-exists? (Files/exists c-data-path (into-array LinkOption []))
-            edn-exists? (Files/exists c-edn-path (into-array LinkOption []))
-            edn-path-str (-> c-edn-path (.toAbsolutePath) (.toString))
-            data-path-str (-> c-data-path (.toAbsolutePath) (.toString))
-            circuit (if edn-exists?
-                      (c.utils/edn->circuit (edn/read-string (slurp edn-path-str)))
-                      (c/build-circuit query rules))]
-        (when (and data-exists? (not edn-exists?))
-          (throw (ex-info (str "Circuit data found but not the definition! Please delete " c-data-path) {:circuit c-name})))
-        (when (not edn-exists?)
-          (spit edn-path-str (pr-str (c.utils/circuit->edn circuit))))
-        (when (not data-exists?)
-          (Files/createDirectories
-            data-path (into-array
-                        [(PosixFilePermissions/asFileAttribute
+       (doseq [[c-name {:wizard.circuit/keys [query rules] :wizard.storage/keys [type]}]
+               circuits]
+         (let [c-data-path (.resolve ^Path data-path (name c-name))
+               c-edn-path (.resolve ^Path edn-path (str (name c-name) ".edn"))
+               data-exists? (Files/exists c-data-path (into-array LinkOption []))
+               edn-exists? (Files/exists c-edn-path (into-array LinkOption []))
+               edn-path-str (-> c-edn-path (.toAbsolutePath) (.toString))
+               data-path-str (-> c-data-path (.toAbsolutePath) (.toString))
+               circuit (if edn-exists?
+                         (c.utils/edn->circuit (edn/read-string (slurp edn-path-str)))
+                         (c/build-circuit query rules))]
+           (when (and data-exists? (not edn-exists?))
+             (throw (ex-info (str "Circuit data found but not the definition! Please delete " c-data-path) {:circuit c-name})))
+           (when (not edn-exists?)
+             (spit edn-path-str (pr-str (c.utils/circuit->edn circuit))))
+           (when (not data-exists?)
+             (Files/createDirectories
+              data-path (into-array
+                         [(PosixFilePermissions/asFileAttribute
                            (PosixFilePermissions/fromString "rwxr-xr--"))])))
-        (add-compiled-view
-          {:id c-name
-           :circuit circuit
-           :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
-           :storage-type type
-           :data-dir data-path-str})))))
+           (add-compiled-view
+            {:id c-name
+             :circuit circuit
+             :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
+             :storage-type type
+             :data-dir data-path-str}))))))
 
 
 (comment

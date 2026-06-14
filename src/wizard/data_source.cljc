@@ -1,8 +1,8 @@
 (ns wizard.data-source
   (:require
-    [datalevin.core :as dl]
-    [datascript.core :as ds]
-    [datomic.api :as d]))
+   #?(:clj [datalevin.core :as dl])
+   [datascript.core :as ds]
+   #?(:clj [datomic.api :as d])))
 
 
 (defprotocol DataSource
@@ -17,40 +17,72 @@
 
   (datoms-since-tx-id [this tx-id]))
 
+#?(:clj
+   (do
+     (defrecord DatalevinSource
+                [ctx]
 
-(defrecord DatalevinSource
-  [ctx]
+       DataSource
 
-  DataSource
+       (transact
+         [_this tx-data]
+         (dl/transact! (:conn ctx) tx-data))
 
-  (transact
-    [_this tx-data]
-    (dl/transact! (:conn ctx) tx-data))
+       (datoms
+         [_this index]
+         (dl/datoms (dl/db (:conn ctx)) index))
+
+       (datoms
+         [_this index c1]
+         (dl/datoms (dl/db (:conn ctx)) index c1))
+
+       (datoms
+         [_this index c1 c2]
+         (dl/datoms (dl/db (:conn ctx)) index c1 c2))
+
+       (datoms
+         [_this index c1 c2 c3]
+         (dl/datoms (dl/db (:conn ctx)) index c1 c2 c3)))
+     (defrecord DatomicSource
+                [ctx]
+
+       DataSource
+
+       (transact
+         [_this tx-data]
+         @(d/transact (:conn ctx) tx-data))
+
+       (datoms
+         [_this index]
+         (d/datoms (d/db (:conn ctx)) index))
+
+       (datoms
+         [_this index c1]
+         (d/datoms (d/db (:conn ctx)) index c1))
+
+       (datoms
+         [_this index c1 c2]
+         (d/datoms (d/db (:conn ctx)) index c1 c2))
+
+       (datoms
+         [_this index c1 c2 c3]
+         (d/datoms (d/db (:conn ctx)) index c1 c2 c3))
+
+       (datoms-since-tx-id
+         [_ tx-id]
+         (let [t (d/tx->t tx-id)]
+           (mapcat :data (d/tx-range (d/log (:conn ctx)) (inc t) nil)))))
+
+     (defn datalevin-source
+       [db-conn]
+       (->DatalevinSource {:conn db-conn}))
+
+     (defn datomic-source
+       [db-conn]
+       (->DatomicSource {:conn db-conn}))))
 
 
-  (datoms
-    [_this index]
-    (dl/datoms (dl/db (:conn ctx)) index))
 
-
-  (datoms
-    [_this index c1]
-    (dl/datoms (dl/db (:conn ctx)) index c1))
-
-
-  (datoms
-    [_this index c1 c2]
-    (dl/datoms (dl/db (:conn ctx)) index c1 c2))
-
-
-  (datoms
-    [_this index c1 c2 c3]
-    (dl/datoms (dl/db (:conn ctx)) index c1 c2 c3)))
-
-
-(defn datalevin-source
-  [db-conn]
-  (->DatalevinSource {:conn db-conn}))
 
 
 (defrecord DataScriptSource
@@ -88,50 +120,12 @@
   (->DataScriptSource {:conn db-conn}))
 
 
-(defrecord DatomicSource
-  [ctx]
 
-  DataSource
-
-  (transact
-    [_this tx-data]
-    @(d/transact (:conn ctx) tx-data))
-
-
-  (datoms
-    [_this index]
-    (d/datoms (d/db (:conn ctx)) index))
-
-
-  (datoms
-    [_this index c1]
-    (d/datoms (d/db (:conn ctx)) index c1))
-
-
-  (datoms
-    [_this index c1 c2]
-    (d/datoms (d/db (:conn ctx)) index c1 c2))
-
-
-  (datoms
-    [_this index c1 c2 c3]
-    (d/datoms (d/db (:conn ctx)) index c1 c2 c3))
-
-
-  (datoms-since-tx-id
-    [_ tx-id]
-    (let [t (d/tx->t tx-id)]
-      (mapcat :data (d/tx-range (d/log (:conn ctx)) (inc t) nil)))))
-
-
-(defn datomic-source
-  [db-conn]
-  (->DatomicSource {:conn db-conn}))
 
 
 (defn get-source-type
   [source]
   (cond
-    (= "class wizard.data_source.DatomicSource" (str (type source))) :datomic
+    #?@(:clj [(= "class wizard.data_source.DatomicSource" (str (type source))) :datomic])
     (instance? DataScriptSource source) :datascript
-    (instance? DatalevinSource source) :datalevin))
+    #?@(:clj [(instance? DatalevinSource source) :datalevin])))

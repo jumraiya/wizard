@@ -1,8 +1,8 @@
 (ns wizard.zset
   (:require
    [caudex.dbsp :as dbsp]
-   [wizard.lmdb.core :as lmdb]
-   [org.replikativ.persistent-sorted-set :as sset]))
+   [org.replikativ.persistent-sorted-set :as sset]
+   #?(:cljs [org.replikativ.persistent-sorted-set.btset :as btset])))
 
 
 (defprotocol ZSet
@@ -15,18 +15,18 @@
   (join-entry [this zset-row]))
 
 (defrecord ZSetVecEntry [tuple wt]
-  ;; Object
-  ;; (equals [this other]
-  ;;   (and (instance? other ZSetVecEntry)
-  ;;        (= (:tuple this) (:tuple other))))
-  ;; (hashCode [_]
-  ;;   (hash tuple))
-  Comparable
-  (compareTo [_this row]
-    (compare tuple (:tuple row)))
-  ZSetEntry
-  (join-entry [_this zset-row]
-    (->ZSetVecEntry (into tuple (:tuple zset-row)) (and wt (:wt zset-row)))))
+  #?@(:clj  [Comparable
+             (compareTo [_this row]
+                        (compare tuple (:tuple row)))]
+      :cljs [IComparable
+             (-compare [_this row]
+                       (compare tuple (:tuple row)))]))
+
+(extend-protocol ZSetEntry
+  ZSetVecEntry
+  (join-entry [this zset-row]
+    (->ZSetVecEntry (into (:tuple this) (:tuple zset-row))
+                    (and (:wt this) (:wt zset-row)))))
 
 (extend-type nil
   ZSet
@@ -35,7 +35,8 @@
   (add-row [_ _])
   (add-zset [_ zset] zset))
 
-(extend-type org.replikativ.persistent_sorted_set.PersistentSortedSet
+(extend-type #?(:clj  org.replikativ.persistent_sorted_set.PersistentSortedSet
+                :cljs btset/BTSet)
   ZSet
   (slice [this lookup]
     (sset/slice this lookup lookup))
@@ -55,24 +56,6 @@
      this
      zset)))
 
-(defrecord LMDBZSet [conn key-prefix]
-  ZSet
-  (slice [_this lookup-key]
-    (let [prefix (into [key-prefix] (filterv #(not= :* %) lookup-key))]
-      (into []
-            (map (fn [[k v]] (->ZSetVecEntry (vec (rest k)) v)))
-            (lmdb/prefix-search conn prefix))))
-  (at [_this k-tuple]
-    (when-let [v (lmdb/get-val conn (into [key-prefix] k-tuple))]
-      (->ZSetVecEntry k-tuple v)))
-  (add-row [this zset-row]
-    (let [full-key (into [key-prefix] (:tuple zset-row))
-          cur-wt   (lmdb/get-val conn full-key)]
-      (cond
-        (nil? cur-wt)                (lmdb/put conn full-key (:wt zset-row))
-        (not= cur-wt (:wt zset-row)) (lmdb/delete conn full-key))
-      this))
-  (add-zset [this zset] (reduce add-row this zset)))
 
 
 (defn mk-comparator [indices]
