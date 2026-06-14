@@ -54,17 +54,27 @@
              :uber-file (str "target/" (name lib) "-" version "-standalone.jar")
              :basis basis})))
 
-(defn deploy-jar [_]
+(defn deploy [_]
   "Build a jar with compiled classes - caudex is now a Maven dependency"
-  (clean nil)
-  (let [basis (b/create-basis {:project "deps.edn"})]
-    ;; Compile wizard source code
-    (b/compile-clj {:basis basis
-                    :src-dirs ["src"]
-                    :class-dir class-dir})
-    ;; Create jar with compiled classes (caudex included via Maven)
-    (b/jar {:class-dir class-dir
-            :jar-file jar-file})))
+  ;(clean nil)
+  (try
+    ((requiring-resolve 'deps-deploy.deps-deploy/deploy)
+     {:installer :remote
+      :artifact jar-file
+      :pom-file (b/pom-path {:lib lib :class-dir class-dir})})
+    (catch Exception e
+      (println "Deploy failed. Make sure you have valid Clojars credentials.")
+      (println "Set CLOJARS_USERNAME and CLOJARS_PASSWORD environment variables")
+      (println "or configure them in ~/.clojars/config.edn")
+      (throw e)))
+  #_(let [basis (b/create-basis {:project "deps.edn"})]
+      ;; Compile wizard source code
+      (b/compile-clj {:basis basis
+                      :src-dirs ["src"]
+                      :class-dir class-dir})
+      ;; Create jar with compiled classes (caudex included via Maven)
+      (b/jar {:class-dir class-dir
+              :jar-file jar-file})))
 (defn install [_]
   (jar nil)
   (b/install {:basis basis

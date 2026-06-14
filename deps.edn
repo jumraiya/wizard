@@ -8,7 +8,8 @@
         org.rocksdb/rocksdbjni {:mvn/version "10.8.3"}
         org.lmdbjava/lmdbjava {:mvn/version "0.9.3"}}
 
- :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.11"}}
+ :aliases {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.11"}
+                          slipset/deps-deploy {:mvn/version "0.2.0"}}
                    :extra-paths ["."]
                    :ns-default build}
 
