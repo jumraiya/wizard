@@ -377,3 +377,21 @@
                  (= target :cljs)
                  (some? (:ns &env)))]
      `(reify-circuit ~circuit ~cljs?))))
+
+(defmacro query->view
+  "Builds a circuit at compile time and emits code that returns
+  {:circuit-fn ... :state ... :circuit ...}.
+  The :circuit-fn is the specialized fn produced by reify-circuit;
+  :state is a fresh atom-state matching :circuit (same op-ids).
+  CLJS-only — embeds the circuit EDN as a literal in the output."
+  ([query] `(query->view ~query nil))
+  ([query rules]
+   (let [[query rules] (mapv #(if (instance? clojure.lang.Cons %)
+                                (second %) %)
+                             [query rules])
+         base (c/build-circuit query rules)
+         edn (utils/circuit->edn base)]
+     `(let [circuit# (caudex.utils/edn->circuit (quote ~edn))]
+        {:circuit-fn (reify-circuit ~base true)
+         :state (wizard.circuit.state/atom-state circuit#)
+         :circuit circuit#}))))
