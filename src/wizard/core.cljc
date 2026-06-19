@@ -44,9 +44,9 @@
                      (circuit tx-data))
             asserts (into []
                           (comp
-                            (filter #(true? (last %)))
-                            (map butlast)
-                            (map vec))
+                           (filter #(true? (last %)))
+                           (map butlast)
+                           (map vec))
                           output)
             retracts (into []
                            (comp
@@ -169,7 +169,7 @@
         :cljs (sync-body)))))
 
 (defn add-compiled-view
-  [{:keys [id circuit compiled-circuit data-dir storage-type]}
+  [id {:keys [circuit circuit-fn data-dir storage-type]}
    & {:keys [args] :or {args {}}}]
   (let [prev-state (get-in @circuits [id :state])
         _ (when prev-state
@@ -181,22 +181,12 @@
                           (r/rocksdb-state data-dir circuit)
                           (c.state/atom-state circuit))
                    :cljs (c.state/atom-state circuit))]
-    (swap! circuits assoc id {:circuit compiled-circuit :state c-state})
+    (swap! circuits assoc id {:circuit circuit-fn :state c-state})
     (swap! subscriptions assoc id [])))
 
 
+
 (defn transact
-  "Transacts data to the DataScript connection and updates all registered views.
-
-  Args:
-    conn    - A DataScript connection
-    tx-data - Transaction data in DataScript format
-
-  Returns:
-    The transaction result from DataScript
-
-  This function processes the transaction through all registered views and
-  recursively applies any derived transactions until a fixed point is reached."
   [tx]
   (assert (some? @data-source) "No data source set!")
   (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
@@ -297,9 +287,9 @@
                          [(PosixFilePermissions/asFileAttribute
                            (PosixFilePermissions/fromString "rwxr-xr--"))])))
            (add-compiled-view
-            {:id c-name
-             :circuit circuit
-             :compiled-circuit (eval `(impl-inline/reify-circuit ~circuit))
+            c-name
+            {:circuit circuit
+             :circuit-fn (eval `(impl-inline/reify-circuit ~circuit))
              :storage-type type
              :data-dir data-path-str}))))))
 

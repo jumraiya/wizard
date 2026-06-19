@@ -50,14 +50,15 @@
    :cljs
    (gen-test-cases))
 
-#?(:cljs
-   (deftest query-view-macro
-     (let [{:keys [circuit-fn state circuit]} (impl/query->view
-                                               [:find ?a ?b
-                                                :where
-                                                [?a :attr-1 ?b]])
-           res (circuit-fn state [[1 :attr-1 2 123 true]
-                                  [2 :attr-2 12 123 true]])]
-       (is (some? circuit))
-       (is (some? state))
-       (is (= #{[1 2 true]} res)))))
+(comment
+  #?(:cljs
+     (deftest query-view-macro
+       (let [{:keys [circuit-fn state circuit]} (impl/query->view
+                                                 [:find ?a ?b
+                                                  :where
+                                                  [?a :attr-1 ?b]])
+             res (circuit-fn state [[1 :attr-1 2 123 true]
+                                    [2 :attr-2 12 123 true]])]
+         (is (some? circuit))
+         (is (some? state))
+         (is (= #{[1 2 true]} res))))))
