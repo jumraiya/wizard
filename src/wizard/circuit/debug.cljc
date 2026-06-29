@@ -11,7 +11,8 @@
    [wizard.circuit-impl-inline :as impl-inline]
    [caudex.utils :as utils]
    [wizard.zset :as zs]
-   [org.replikativ.persistent-sorted-set :as sset]))
+   [org.replikativ.persistent-sorted-set :as sset])
+  (:import [wizard.circuit.state OpStateRef]))
 
 (defn- init-debug-data [circuit]
   (let [id #(str (if (record? %) (dbsp/-get-id %) %))
@@ -51,10 +52,10 @@
     (assoc data :nodes nodes :edges edges)))
 
 (defn- zv->vec [zv]
-  (if (instance? wizard.zset.ZSetVecEntry zv)
+  (cond (instance? wizard.zset.ZSetVecEntry zv)
     (when (seq (:tuple zv))
       (conj (:tuple zv) (:wt zv)))
-    zv))
+    :else zv))
 
 (defn- update-debug-data [data outputs]
   (run!
@@ -92,6 +93,14 @@
        (prn "tx" tx)
        (let [caudex-impl (c.impl/step caudex-impl tx)
              _ (inline-impl c-state tx)
+             recode-stream-data (fn [data]
+                                  (into
+                                   {}
+                                   (comp
+                                    (map zv->vec)
+                                    (filter some?)
+                                    (map #(vector (-> % butlast vec) (last %))))
+                                   data))
              _ (update-debug-data debug-data
                                   (into {}
                                         (map #(let [op-id (dbsp/-get-id %)]
@@ -100,59 +109,51 @@
          (doseq [op ops-order]
            (let [ref-output-stream (first (get-in caudex-impl [:op-stream-map (dbsp/-get-id op) :outputs]))
                  ref-data (last (get (:streams caudex-impl) ref-output-stream))
-                 stream-data (into
-                              {}
-                              (comp
-                               (map zv->vec)
-                               (filter some?)
-                               (map #(vector (-> % butlast vec) (last %))))
-                              (state/getv c-state (dbsp/-get-id op)))]
+                 op-data (state/getv c-state (dbsp/-get-id op))
+                 stream-data (recode-stream-data
+                              (if (instance? OpStateRef op-data)
+                                (state/getv c-state (:ref-op-id op-data))
+                                op-data))]
                                         ;(prn (dbsp/-get-id op) stream-data)
              (dump-debug-data debug-data)
              (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
-             (throw (Exception. "asd"))
+             ;(throw (Exception. "asd"))
              (when (not= stream-data ref-data)
-               (throw
-                (ex-info
-                 (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data)
-                 {:tx tx})))))
+               (prn (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data))
+               #_(throw
+                  (ex-info
+                   (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data)
+                   {:tx tx})))))
          [caudex-impl c-state]))
      [caudex-impl c-state]
      transactions)))
 
 (comment
   (def circuit
-    (caudex.utils/edn->circuit
-                 (clojure.edn/read-string
-                  (slurp "/Users/jumraiya/projects/wizard/benchmark/datalevin/circuits/datalevin-join-benchmark.edn"))))
-  (def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
+    (c/build-circuit
+     '[:find ?p ?div ?len
+       :where
+       [?p :player/div ?div]
+       [?p :player/len ?len]]))
+  ;(def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
+  (def c-state (state/atom-state circuit))
   (state/get-view c-state)
   ;; (spit "/tmp/circ.edn" (utils/circuit->edn circuit))
   ;; (def circuit (utils/edn->circuit (slurp "/tmp/circ.edn")))
-  (let [transactions [[[:obj :object/description "desc" 123 true]
-                       [:obj :object/detailed-description "detailed desc" 123 true]
-                       [:obj :object/location :loc 123 true]
-                       [:player :object/description "player" 123 true]]
-                      [[:player :object/location :loc 123 true]]
-                      [[:action-1 :action/type :move 124 true]
-                       [:action-1 :action/arg "south" 124 true]]
-                      [[:action-2 :action/type :inspect 124 true]
-                       [:action-2 :action/arg "desc" 124 true]]
-                      [[:action-2 :action/inspect-processed? true 124 true]]
-                      [[:player :object/location :loc 123 false]
-                       [:player :object/location :loc-2 123 true]]
-                      [[:action-3 :action/type :inspect 124 true]
-                       [:action-3 :action/arg "desc" 124 true]]]
+  (let [transactions [[[1 :player/div 4 123 true]
+                       [1 :player/len [1 0] 123 true]]
+                      [[1 :player/div 4 124 false]
+                       [1 :player/len [1 0] 124 false]
+                       [1 :player/div 3 124 true]
+                       [1 :player/len [3 2] 124 true]]]
         caudex-impl (c.impl/reify-circuit circuit)
         inline-impl (impl-inline/reify-circuit circuit)
-        inline-state (atom {})
         ;; c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
-        c-state (state/atom-state circuit)
-        ]
+        c-state (state/atom-state circuit)]
     (compare-states circuit c-state caudex-impl inline-impl transactions))
-  
-  (dump-circuit )
-  
+
+  (dump-circuit)
+
   (def op (some #(when (= 'input-17094 (dbsp/-get-id %)) %) (g/nodes circuit)))
 
   (def zs (into (sset/sorted-set-by (wizard.zset/mk-comparator [1 0 2 3]))

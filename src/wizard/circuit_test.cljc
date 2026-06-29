@@ -1,10 +1,11 @@
 (ns wizard.circuit-test
   (:require [clojure.test :refer [deftest is]]
-            [caudex.circuit :as c]
+            #?(:clj [caudex.circuit :as c])
             [caudex.utils :as c.utils]
-            [matcher-combinators.test]
+            #?(:clj [matcher-combinators.test])
             [wizard.circuit.state :as state]
             [wizard.circuit-impl-inline :as impl]
+            [wizard.circuit-impl-inline-fns]
             [wizard.circuit-test-cases :as t])
   #?(:cljs (:require-macros [wizard.circuit-test :refer [gen-test-cases]])))
 
@@ -50,8 +51,7 @@
    :cljs
    (gen-test-cases))
 
-(comment
-  #?(:cljs
+#?(:cljs
      (deftest query-view-macro
        (let [{:keys [circuit-fn state circuit]} (impl/query->view
                                                  [:find ?a ?b
@@ -61,4 +61,7 @@
                                     [2 :attr-2 12 123 true]])]
          (is (some? circuit))
          (is (some? state))
-         (is (= #{[1 2 true]} res))))))
+         (is (= #{[1 2 true]} res)))))
+
+(comment
+  )

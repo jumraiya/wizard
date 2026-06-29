@@ -6,6 +6,7 @@
             [clojure.edn :as edn]
             [wizard.circuit.state :as c.state]
             [wizard.zset :as z]
+            [wizard.circuit-impl-inline-fns :as fns]
             [org.replikativ.persistent-sorted-set :as sset]))
 
 
@@ -109,20 +110,22 @@
         lookup-key (mapv #(if (contains? replace-map %)
                             `(nth (:tuple ~delta-row-sym) ~(get replace-map %))
                             :*)
-                         (range key-len))]
-    `(reduce
-      (fn [output# ~delta-row-sym]
-        (into output#
-              (reduce
-               (fn [new-rows# ~join-row-sym]
-                 (conj new-rows#
-                       ~(if flipped?
-                          `(z/join-entry ~delta-row-sym ~join-row-sym)
-                          `(z/join-entry ~join-row-sym ~delta-row-sym))))
-               []
-               (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key))))
-      (z/gen-op-zset ~op)
-      (wizard.circuit.state/getv ~state-var ~tx-var '~other-id))))
+                         (range key-len))
+        op-id (dbsp/-get-id op)]
+    `(fns/join ~state-var ~tx-var '~other-id '~integrated-id ~replace-map ~key-len (z/gen-op-zset ~op) ~flipped?)
+    #_`(reduce
+        (fn [output# ~delta-row-sym]
+          (into output#
+                (reduce
+                 (fn [new-rows# ~join-row-sym]
+                   (conj new-rows#
+                         ~(if flipped?
+                            `(z/join-entry ~delta-row-sym ~join-row-sym)
+                            `(z/join-entry ~join-row-sym ~delta-row-sym))))
+                 []
+                 (wizard.circuit.state/slice ~state-var ~tx-var '~integrated-id ~lookup-key))))
+        (z/gen-op-zset ~op)
+        (wizard.circuit.state/getv ~state-var ~tx-var '~other-id))))
 
 
 (defmacro gen-zset-for-join [op circuit]
@@ -231,16 +234,18 @@
                                             (wizard.circuit.state/getv ~state-var ~tx-var '~input-1)))
       :delay `(wizard.circuit.state/put ~state-var ~tx-var '~op-id
                                         (c.state/->OpStateRef '~input-1))
-      :integrate `(wizard.circuit.state/add ~state-var ~tx-var '~op-id
-                                            (persistent!
-                                             (reduce
-                                              (fn [ss# row#]
-                                                (let [cur# (z/at ss# (z/->ZSetVecEntry (:tuple row#) :*))]
-                                                  (if (and cur# (not= (:wt row#) (:wt cur#)))
-                                                    (disj! ss# cur#)
-                                                    (conj! ss# row#))))
-                                              (transient (gen-zset-for-join ~op ~circuit))
-                                              (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
+      :integrate `(let [join-zset# (gen-zset-for-join ~op ~circuit)]
+                      (fns/integrate ~state-var ~tx-var '~op-id ~op '~input-1 join-zset#))
+      #_`(wizard.circuit.state/add ~state-var ~tx-var '~op-id
+                                   (persistent!
+                                    (reduce
+                                     (fn [ss# row#]
+                                       (let [cur# (z/at ss# (z/->ZSetVecEntry (:tuple row#) :*))]
+                                         (if (and cur# (not= (:wt row#) (:wt cur#)))
+                                           (disj! ss# cur#)
+                                           (conj! ss# row#))))
+                                     (transient (gen-zset-for-join ~op ~circuit))
+                                     (wizard.circuit.state/getv ~state-var ~tx-var '~input-1))))
 
       :join `(wizard.circuit.state/put
               ~state-var ~tx-var '~op-id

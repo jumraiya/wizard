@@ -6,6 +6,7 @@
    #?(:clj [datomic.api :as d])
    [wizard.circuit-impl :as c.impl]
    [wizard.circuit-impl-inline :as impl-inline]
+   [clojure.set :as set]
    [wizard.circuit.state :as c.state]
    [wizard.config :as config]
    [wizard.data-source :as d.src]
@@ -32,47 +33,57 @@
 
 (defonce ^:private ccircuits (atom {}))
 
+(def ^:dynamic *debug-transact* false)
+
 #?(:clj (set! *warn-on-reflection* true))
 
+(declare get-view)
 
 (defn- process-tx
   [_id tx-data]
+  (when *debug-transact*
+    (prn "processing" tx-data))
   (reduce
-    (fn [tx [id {:keys [circuit view state]}]]
-      (let [output (if (some? state)
-                     (circuit state tx-data)
-                     (circuit tx-data))
-            asserts (into []
+   (fn [[tx views] [id {:keys [circuit view state]}]]
+     (when *debug-transact*
+       (prn "id" id))
+     (let [output (if (some? state)
+                    (circuit state tx-data)
+                    (circuit tx-data))
+           asserts (into []
+                         (comp
+                          (filter #(true? (last %)))
+                          (map butlast)
+                          (map vec))
+                         output)
+           retracts (into []
                           (comp
-                           (filter #(true? (last %)))
+                           (filter #(false? (last %)))
                            (map butlast)
                            (map vec))
                           output)
-            retracts (into []
-                           (comp
-                             (filter #(false? (last %)))
-                             (map butlast)
-                             (map vec))
-                           output)
-            view (reduce
+           view (if (some? state)
+                  (get-view id)
+                  (reduce
                    conj
                    (reduce
-                     disj
-                     view
-                     retracts)
-                   asserts)]
-        (swap! circuits update id
-               (fn [{:keys [diffs] :as data}]
-                 (assoc data :view view :diffs (conj diffs output))))
-        (into
-          tx
-          (when-not (empty? output)
-            (reduce
-              #(into %1 (%2 asserts retracts view))
-              []
-              (get @subscriptions id))))))
-    []
-    @circuits))
+                    disj
+                    view
+                    retracts)
+                   asserts))
+           new-tx (when-not (empty? output)
+                    (reduce
+                     #(into %1 (%2 asserts retracts view))
+                     []
+                     (get @subscriptions id)))]
+       (when *debug-transact*
+         (prn "output" output "view" view "new-tx" new-tx))
+       [(into tx new-tx)
+        (if (seq new-tx)
+          (conj views id)
+          views)]))
+   [[] #{}]
+   @circuits))
 
 
 (defn set-data-source!
@@ -187,13 +198,17 @@
 
 
 (defn transact
-  [tx]
-  (assert (some? @data-source) "No data source set!")
-  (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
-        new-tx (process-tx ::views tx-data)]
-    (if (seq new-tx)
-      (transact new-tx)
-      ret)))
+  ([tx]
+   (transact tx #{}))
+  ([tx views-fired]
+   (assert (some? @data-source) "No data source set!")
+   (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
+         [new-tx new-views-fired] (process-tx ::views tx-data)
+         already-fired (set/intersection views-fired new-views-fired)]
+     (assert (empty? already-fired) (str "Views fired more than once!" already-fired))
+     (if (seq new-tx)
+       (transact new-tx (into views-fired new-views-fired))
+       ret))))
 
 
 (defn get-view
