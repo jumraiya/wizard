@@ -2,7 +2,7 @@
   (:require [wizard.zset :as z]
             [wizard.circuit.state]))
 
-(defn integrate [state tx op-id op input-1 join-zset]
+(defn integrate [state tx op-id input-1 join-zset]
   (wizard.circuit.state/add state tx op-id
                             (persistent!
                              (reduce

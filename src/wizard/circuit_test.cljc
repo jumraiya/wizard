@@ -1,11 +1,12 @@
 (ns wizard.circuit-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             #?(:clj [caudex.circuit :as c])
             [caudex.utils :as c.utils]
             #?(:clj [matcher-combinators.test])
             [wizard.circuit.state :as state]
             [wizard.circuit-impl-inline :as impl]
             [wizard.circuit-impl-inline-fns]
+            [wizard.views :as v :include-macros true]
             [wizard.circuit-test-cases :as t])
   #?(:cljs (:require-macros [wizard.circuit-test :refer [gen-test-cases]])))
 
@@ -36,24 +37,24 @@
 #?(:clj
    (deftest run-test-cases
      (doseq [{:keys [case query rules data]} t/test-cases]
-       (println (str "Testing " case))
-       (let [base (c/build-circuit query rules)
-             circuit (eval `(impl/reify-circuit ~base))
-             c-state (state/atom-state base)]
-         (reduce
-          (fn [circ {:keys [tx output]}]
-            (let [res (circ c-state tx)]
-              (when output
-                (is (= res output)))
-              circ))
-          circuit
-          data))))
+       (testing case
+               (let [base (c/build-circuit query rules)
+                     circuit (eval `(impl/reify-circuit ~base))
+                     c-state (state/atom-state base)]
+                 (reduce
+                  (fn [circ {:keys [tx output]}]
+                    (let [res (circ c-state tx)]
+                      (when output
+                        (is (= res output)))
+                      circ))
+                  circuit
+                  data)))))
    :cljs
    (gen-test-cases))
 
 #?(:cljs
      (deftest query-view-macro
-       (let [{:keys [circuit-fn state circuit]} (impl/query->view
+       (let [{:keys [circuit-fn state circuit]} (v/query->view
                                                  [:find ?a ?b
                                                   :where
                                                   [?a :attr-1 ?b]])

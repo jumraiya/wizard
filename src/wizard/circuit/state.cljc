@@ -61,7 +61,7 @@
   (let [entry (zs/->ZSetVecEntry (vec (butlast lookup-key)) (last lookup-key))]
     (into (sset/sorted-set)
           (sset/slice
-           (or (getv state op-id)
+           (or (getv state tx op-id)
                (sset/sorted-set))
            entry entry))))
 
@@ -89,14 +89,16 @@
   (let [op-id' (if (instance? OpStateRef (get tx op-id))
                  (:ref-op-id (get tx op-id))
                  op-id)
-        base (atom-slice this tx op-id' lookup-key)
-        deltas (when (and (contains? (:deltas tx) op-id') (= op-id op-id'))
-                 (into (sset/sorted-set)
-                       (sset/slice (get-in tx [:deltas op-id'])
-                                   lookup-key lookup-key)))]
-    (if (seq deltas)
-      (merge-delta base deltas)
-      base)))
+        base (atom-slice this tx op-id lookup-key)
+        ;; deltas (when (and (contains? (:deltas tx) op-id') (= op-id op-id'))
+        ;;          (into (sset/sorted-set)
+        ;;                (sset/slice (get-in tx [:deltas op-id'])
+        ;;                            lookup-key lookup-key)))
+        ]
+    base
+    #_(if (seq deltas)
+        (merge-delta base deltas)
+        base)))
 
 (defrecord AtomCircuitState
     [^clojure.lang.Atom state]

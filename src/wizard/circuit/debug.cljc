@@ -6,13 +6,14 @@
    #?(:clj [clojure.data.json :as json])
    [caudex.graph :as g]
    [wizard.circuit.state :as state]
-   [wizard.lmdb.circuit-state :as l.state]
-   [wizard.rocksdb.circuit-state :as r.state]
+   #?(:clj [wizard.lmdb.circuit-state :as l.state])
+   #?(:clj [wizard.rocksdb.circuit-state :as r.state])
    [wizard.circuit-impl-inline :as impl-inline]
    [caudex.utils :as utils]
+   [wizard.views :as v]
    [wizard.zset :as zs]
    [org.replikativ.persistent-sorted-set :as sset])
-  (:import [wizard.circuit.state OpStateRef]))
+  #?(:clj (:import [wizard.circuit.state OpStateRef])))
 
 (defn- init-debug-data [circuit]
   (let [id #(str (if (record? %) (dbsp/-get-id %) %))
@@ -111,16 +112,17 @@
                  ref-data (last (get (:streams caudex-impl) ref-output-stream))
                  op-data (state/getv c-state (dbsp/-get-id op))
                  stream-data (recode-stream-data
-                              (if (instance? OpStateRef op-data)
+                              (if #?(:clj (instance? OpStateRef op-data)
+                                     :cljs (instance? state/OpStateRef op-data))
                                 (state/getv c-state (:ref-op-id op-data))
                                 op-data))]
                                         ;(prn (dbsp/-get-id op) stream-data)
              (dump-debug-data debug-data)
              (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
              ;(throw (Exception. "asd"))
-             (when (not= stream-data ref-data)
-               (prn (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data))
-               #_(throw
+             (prn (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data))
+             #_(when (not= stream-data ref-data)
+                 (throw
                   (ex-info
                    (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data)
                    {:tx tx})))))
@@ -135,22 +137,34 @@
        :where
        [?p :player/div ?div]
        [?p :player/len ?len]]))
-  ;(def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
+  (def tes
+    (v/query->view
+     [:find ?p ?div ?len
+      :where
+      [?p :player/div ?div]
+      [?p :player/len ?len]]))
+                                        ;(def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
   (def c-state (state/atom-state circuit))
   (state/get-view c-state)
   ;; (spit "/tmp/circ.edn" (utils/circuit->edn circuit))
   ;; (def circuit (utils/edn->circuit (slurp "/tmp/circ.edn")))
   (let [transactions [[[1 :player/div 4 123 true]
                        [1 :player/len [1 0] 123 true]]
-                      [[1 :player/div 4 124 false]
-                       [1 :player/len [1 0] 124 false]
-                       [1 :player/div 3 124 true]
+                      [[1 :player/div 4 123 false]
+                       [1 :player/len [1 0] 123 false]
+                       [1 :player/div 3 124  true]
                        [1 :player/len [3 2] 124 true]]]
-        caudex-impl (c.impl/reify-circuit circuit)
-        inline-impl (impl-inline/reify-circuit circuit)
+        ;; caudex-impl (c.impl/reify-circuit circuit)
+        ;; inline-impl (impl-inline/reify-circuit wizard.circuit.debug/circuit)
+        caudex-impl (c.impl/reify-circuit (:circuit tes))
+        inline-impl (:circuit-fn tes)
+        c-state (state/atom-state (:circuit tes))
         ;; c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
-        c-state (state/atom-state circuit)]
-    (compare-states circuit c-state caudex-impl inline-impl transactions))
+        ;; c-state (state/atom-state circuit)
+        ]
+    ;(compare-states circuit c-state caudex-impl inline-impl transactions)
+    (compare-states (:circuit tes) c-state caudex-impl inline-impl transactions)
+    )
 
   (dump-circuit)
 
