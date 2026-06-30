@@ -38,17 +38,18 @@
    (deftest run-test-cases
      (doseq [{:keys [case query rules data]} t/test-cases]
        (testing case
-               (let [base (c/build-circuit query rules)
-                     circuit (eval `(impl/reify-circuit ~base))
-                     c-state (state/atom-state base)]
-                 (reduce
-                  (fn [circ {:keys [tx output]}]
-                    (let [res (circ c-state tx)]
-                      (when output
-                        (is (= res output)))
-                      circ))
-                  circuit
-                  data)))))
+         (println (str "Testing " case))
+         (let [base (c/build-circuit query rules)
+               circuit (eval `(impl/reify-circuit ~base))
+               c-state (state/atom-state base)]
+           (reduce
+            (fn [circ {:keys [tx output]}]
+              (let [res (circ c-state tx)]
+                (when output
+                  (is (= res output)))
+                circ))
+            circuit
+            data)))))
    :cljs
    (gen-test-cases))
 

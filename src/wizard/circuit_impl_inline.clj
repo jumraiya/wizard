@@ -317,7 +317,7 @@
                      (wizard.circuit.state/commit ~state-var ~tx-var)
                      (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))))
          xf `(comp ~@op-fns)]
-     `(fn [~state-var tx-data# & {:keys [auto-commit?] :or {auto-commit? true}}]
+     `(fn [~state-var tx-data#]
         (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
               ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
           (into #{}
