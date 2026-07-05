@@ -40,9 +40,9 @@
 (declare get-view)
 
 (defn- process-tx
-  [_id tx-data]
+  [_id tx-data views-fired]
   (when *debug-transact*
-    (prn "processing" tx-data))
+    (prn "processing" tx-data "views fired" views-fired))
   (reduce
    (fn [[tx views] [id {:keys [circuit view state]}]]
      (when *debug-transact*
@@ -71,7 +71,8 @@
                     view
                     retracts)
                    asserts))
-           new-tx (when-not (empty? output)
+           new-tx (when-not (or (empty? output)
+                                 (contains? views-fired id))
                     (reduce
                      #(into %1 (%2 asserts retracts view))
                      []
@@ -196,19 +197,35 @@
     (swap! subscriptions assoc id [])))
 
 
-
-(defn transact
+(defn- transact*
   ([tx]
-   (transact tx #{}))
+   (transact* tx #{}))
   ([tx views-fired]
-   (assert (some? @data-source) "No data source set!")
    (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
-         [new-tx new-views-fired] (process-tx ::views tx-data)
+         [new-tx new-views-fired] (process-tx ::views tx-data views-fired)
          already-fired (set/intersection views-fired new-views-fired)]
      (assert (empty? already-fired) (str "Views fired more than once!" already-fired))
      (if (seq new-tx)
-       (transact new-tx (into views-fired new-views-fired))
+       (transact* new-tx (into views-fired new-views-fired))
        ret))))
+
+
+(defn transact [tx]
+  (assert (some? @data-source) "No data source set!")
+  (doseq [[_ {:keys [state]}] @circuits]
+    (c.state/start-checkpoint! state))
+  (try
+    (transact* tx)
+    (catch #?(:clj Exception :cljs js/Error) e
+      (prn "rolling back circuits")
+      (doseq [[_ {:keys [state]}] @circuits]
+        (c.state/rollback-to-checkpoint! state))
+      (prn "rolled back")
+      (throw e))
+    (finally
+      (doseq [[_ {:keys [state]}] @circuits]
+        (c.state/stop-checkpoint! state)
+        (c.state/cleanup-checkpoint! state)))))
 
 
 (defn get-view

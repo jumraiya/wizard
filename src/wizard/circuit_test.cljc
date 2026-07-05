@@ -10,6 +10,16 @@
             [wizard.circuit-test-cases :as t])
   #?(:cljs (:require-macros [wizard.circuit-test :refer [gen-test-cases]])))
 
+(defn- run-test-case [circuit-fn c-state data]
+  (reduce
+   (fn [c-state {:keys [tx output]}]
+     (let [res (circuit-fn c-state tx)]
+       (when output
+         (is (= res output)))
+       c-state))
+   c-state
+   data))
+
 #?(:clj
    (defmacro gen-test-cases []
      (require 'caudex.circuit 'wizard.circuit-test-cases)
@@ -25,14 +35,20 @@
                    (println (str "Testing " ~case))
                    (let [circuit# (impl/edn->circuit ~edn)
                          c-state# (state/atom-state (c.utils/edn->circuit (quote ~edn)))]
-                     (reduce
-                      (fn [circ# {tx# :tx output# :output}]
-                        (let [res# (circ# c-state# tx#)]
-                          (when output#
-                            (is (= res# output#)))
-                          circ#))
-                      circuit#
-                      '~data)))))))))
+                     (state/start-checkpoint! c-state#)
+                     (run-test-case circuit# c-state# '~data)
+                     (state/rollback-to-checkpoint! c-state#)
+                     (run-test-case circuit# c-state# data#)
+                     (state/cleanup-checkpoint! c-state#)
+                     (is (empty? (state/get-tx-since-checkpoint c-state#)))
+                     #_(reduce
+                        (fn [circ# {tx# :tx output# :output}]
+                          (let [res# (circ# c-state# tx#)]
+                            (when output#
+                              (is (= res# output#)))
+                            circ#))
+                        circuit#
+                        '~data)))))))))
 
 #?(:clj
    (deftest run-test-cases
@@ -42,14 +58,12 @@
          (let [base (c/build-circuit query rules)
                circuit (eval `(impl/reify-circuit ~base))
                c-state (state/atom-state base)]
-           (reduce
-            (fn [circ {:keys [tx output]}]
-              (let [res (circ c-state tx)]
-                (when output
-                  (is (= res output)))
-                circ))
-            circuit
-            data)))))
+           (state/start-checkpoint! c-state)
+           (run-test-case circuit c-state data)
+           (state/rollback-to-checkpoint! c-state)
+           (run-test-case circuit c-state data)
+           (state/cleanup-checkpoint! c-state)
+           (is (empty? (state/get-tx-since-checkpoint c-state)))))))
    :cljs
    (gen-test-cases))
 

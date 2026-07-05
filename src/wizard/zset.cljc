@@ -22,6 +22,9 @@
              (-compare [_this row]
                        (compare tuple (:tuple row)))]))
 
+(defn mk-zset-entry [tuple wt]
+  (->ZSetVecEntry tuple wt))
+
 (extend-protocol ZSetEntry
   ZSetVecEntry
   (join-entry [this zset-row]

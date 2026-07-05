@@ -310,19 +310,21 @@
          tx-var (gensym)
          final-op-id (-> ops last last dbsp/-get-id)
          op-fns (reverse
-                 (conj
-                  (mapv (fn [op]
-                          `(gen-strata-fn ~circuit ~op ~state-var ~tx-var ~cljs?)) ops)
-                  `(fn [~tx-var]
-                     (wizard.circuit.state/commit ~state-var ~tx-var)
-                     (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))))
+                 (mapv (fn [op]
+                         `(gen-strata-fn ~circuit ~op ~state-var ~tx-var ~cljs?)) ops))
          xf `(comp ~@op-fns)]
-     `(fn [~state-var tx-data#]
+     `(fn [~state-var tx-data# & [auto-commit#]]
         (let [~tx-var (wizard.circuit.state/init-tx ~state-var)
-              ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)]
-          (into #{}
-                (map #(conj (:tuple %) (:wt %)))
-                (~xf ~tx-var)))))))
+              ~tx-var (wizard.circuit.state/put ~state-var ~tx-var :tx-data tx-data#)
+              ~tx-var (~xf ~tx-var)
+              res# (into #{}
+                         (map #(conj (:tuple %) (:wt %)))
+                         (wizard.circuit.state/getv ~state-var ~tx-var '~final-op-id))]
+          (if (not (false? auto-commit#))
+            (do
+              (wizard.circuit.state/commit ~state-var ~tx-var)
+              res#)
+            [res# ~tx-var]))))))
 
 (defmacro query->circuit
   ([query] `(query->circuit ~query nil nil))

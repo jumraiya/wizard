@@ -38,6 +38,16 @@
 
   (get-last-processed-tx [this])
 
+  (start-checkpoint! [this])
+
+  (stop-checkpoint! [this])
+
+  (cleanup-checkpoint! [this])
+
+  (get-tx-since-checkpoint [this])
+  
+  (rollback-to-checkpoint! [this])
+
   (close [this]))
 
 (defn- upd
@@ -139,19 +149,25 @@
       (upd this tx)
       (swap! state
              (fn [state]
-               (-> state
-                   (update :view
-                           (fn [view]
-                             (persistent!
-                              (reduce
-                               #(if (contains? %1 (:tuple %2))
-                                  (if (false? (:wt %2))
-                                    (disj! %1 (:tuple %2))
-                                    %1)
-                                  (conj! %1 (:tuple %2)))
-                               (transient view)
-                               (get tx (:output-op state))))))
-                   (assoc :last-processed-tx (some-> tx :tx-data last (nth 3))))))
+               (cond-> state
+                 true
+                 (update :view
+                         (fn [view]
+                           (persistent!
+                            (reduce
+                             #(if (contains? %1 (:tuple %2))
+                                (if (false? (:wt %2))
+                                  (disj! %1 (:tuple %2))
+                                  %1)
+                                (conj! %1 (:tuple %2)))
+                             (transient view)
+                             (get tx (:output-op state))))))
+                 true
+                 (assoc :last-processed-tx (some-> tx :tx-data last (nth 3)))
+                 (:checkpoint-enabled? state)
+                 (update :tx-since-checkpoint
+                         conj (assoc-in tx [:deltas :view]
+                                        (-> state :output-op tx))))))
       nil)
 
 
@@ -164,7 +180,50 @@
       [_]
       (:last-processed-tx @state))
 
+    (start-checkpoint! [_]
+      (when (:checkpoint-enabled? @state)
+        #?(:cljs (throw (js/Error. "Checkpoint aleady enabled!"))
+           :clj (throw (Exception. "Checkpoint already enabled!"))))
+      (swap! state
+             (fn [s]
+               (assoc s
+                      :checkpoint-enabled? true
+                      :tx-since-checkpoint []))))
 
+    (stop-checkpoint! [_]
+      (swap! state dissoc :checkpoint-enabled?))
+
+    (cleanup-checkpoint! [_]
+      (swap! state dissoc :tx-since-checkpoint))
+
+    (get-tx-since-checkpoint [_]
+      (:tx-since-checkpoint @state))
+    
+    (rollback-to-checkpoint! [_]
+      (swap! state
+             (fn [s]
+               (reduce
+                (fn [s tx]
+                  (reduce
+                   (fn [s [op-id delta]]
+                     (if (= op-id :view)
+                         (update s op-id
+                                 #(into (sset/sorted-set)
+                                        (map :tuple)
+                                        (zs/add-zset
+                                         (into (sset/sorted-set)
+                                               (map (fn [e] (zs/mk-zset-entry e true)))
+                                               %)
+                                         (mapv (fn [row] (update row :wt not)) delta))))
+                         (update s op-id
+                                 #(zs/add-zset
+                                   %
+                                   (mapv (fn [row] (update row :wt not)) delta)))))
+                   s
+                   (-> tx :deltas reverse)))
+                s
+                (:tx-since-checkpoint s)))))
+    
     (close [_]))
 
 

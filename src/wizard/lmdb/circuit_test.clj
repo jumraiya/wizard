@@ -1,5 +1,5 @@
 (ns wizard.lmdb.circuit-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [matcher-combinators.test]
             [wizard.circuit-impl-inline :as impl]
             [caudex.circuit :as c]
@@ -22,14 +22,15 @@
 (deftest run-cases
   (doseq [{:keys [query rules data case]} test-cases/test-cases]
     (println (str "Testing " case))
-    (let [ccircuit (c/build-circuit query rules)
-          circuit (eval `(impl/reify-circuit ~ccircuit))
-          c-state (make-state ccircuit)]
-      (reduce
-       (fn [c-state {:keys [tx output]}]
-         (let [res (circuit c-state tx)]
-           (when output
-             (is (= res output)))
-           c-state))
-       c-state
-       data))))
+    (testing case
+        (let [ccircuit (c/build-circuit query rules)
+              circuit (eval `(impl/reify-circuit ~ccircuit))
+              c-state (make-state ccircuit)]
+          (reduce
+           (fn [c-state {:keys [tx output]}]
+             (let [res (circuit c-state tx)]
+               (when output
+                 (is (= res output)))
+               c-state))
+           c-state
+           data)))))
