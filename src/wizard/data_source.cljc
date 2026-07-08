@@ -16,7 +16,8 @@
     [this index c1 c2 c3])
 
   (datoms-since-tx-id [this tx-id])
-  (with [this tx]))
+  (with [this db tx])
+  (get-db [this]))
 
 #?(:clj
    (do
@@ -73,8 +74,12 @@
          [_ tx-id]
          (let [t (d/tx->t tx-id)]
            (mapcat :data (d/tx-range (d/log (:conn ctx)) (inc t) nil))))
-       (with [_ tx]
-         (d/with (d/db (:conn ctx)) tx)))
+
+       (with [_ db tx]
+         (d/with db tx))
+
+       (get-db [_]
+         (d/db (:conn ctx))))
 
      (defn datalevin-source
        [db-conn]
@@ -117,8 +122,11 @@
     [_this index c1 c2 c3]
     (ds/datoms @(:conn ctx) index c1 c2 c3))
 
-  (with [_ tx]
-    (ds/with @(:conn ctx) tx)))
+  (with [_ db tx]
+    (ds/with db tx))
+
+  (get-db [_]
+    @(:conn ctx)))
 
 
 (defn datascript-source

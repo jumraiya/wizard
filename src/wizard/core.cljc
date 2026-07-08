@@ -40,51 +40,50 @@
 (declare get-view)
 
 (defn- process-tx
-  [_id tx-data views-fired]
+  [tx-data views-fired]
   (when *debug-transact*
     (prn "processing" tx-data "views fired" views-fired))
-  (reduce
-   (fn [[tx views] [id {:keys [circuit view state]}]]
-     (when *debug-transact*
-       (prn "id" id))
-     (let [output (if (some? state)
-                    (circuit state tx-data)
-                    (circuit tx-data))
-           asserts (into []
-                         (comp
-                          (filter #(true? (last %)))
-                          (map butlast)
-                          (map vec))
-                         output)
-           retracts (into []
-                          (comp
-                           (filter #(false? (last %)))
-                           (map butlast)
-                           (map vec))
-                          output)
-           view (if (some? state)
-                  (get-view id)
-                  (reduce
-                   conj
-                   (reduce
-                    disj
-                    view
-                    retracts)
-                   asserts))
-           new-tx (when-not (or (empty? output)
-                                 (contains? views-fired id))
-                    (reduce
-                     #(into %1 (%2 asserts retracts view))
-                     []
-                     (get @subscriptions id)))]
+  (let [change-sets (into {}
+                          (map
+                           (fn [[id {:keys [circuit state]}]]
+                             (let [output (if (some? state)
+                                            (circuit state tx-data)
+                                            (circuit tx-data))
+                                   asserts (into []
+                                                 (comp
+                                                  (filter #(true? (last %)))
+                                                  (map butlast)
+                                                  (map vec))
+                                                 output)
+                                   retracts (into []
+                                                  (comp
+                                                   (filter #(false? (last %)))
+                                                   (map butlast)
+                                                   (map vec))
+                                                  output)]
+                               (when *debug-transact*
+                                 (prn "asserts" asserts "retracts" retracts))
+                               (when (seq output)
+                                 [id {:asserts asserts :retracts retracts}])))
+                           @circuits))]
+    (reduce
+     (fn [[tx views] [id {:keys [asserts retracts]}]]
        (when *debug-transact*
-         (prn "output" output "view" view "new-tx" new-tx))
-       [(into tx new-tx)
-        (if (seq new-tx)
-          (conj views id)
-          views)]))
-   [[] #{}]
-   @circuits))
+         (prn "id" id))
+       (let [new-tx (when (or (seq asserts)
+                              (seq retracts))
+                      (reduce
+                       #(into %1 (%2 asserts retracts (get-view id)))
+                       []
+                       (get @subscriptions id)))]
+         (when *debug-transact*
+           (prn "new-tx" new-tx))
+         [(into tx new-tx)
+          (if (seq new-tx)
+            (conj views id)
+            views)]))
+     [[] #{}]
+     change-sets)))
 
 
 (defn set-data-source!
@@ -197,17 +196,18 @@
     (swap! subscriptions assoc id [])))
 
 
-(defn- transact*
-  ([tx]
-   (transact* tx #{}))
-  ([tx views-fired]
-   (let [{:keys [tx-data] :as ret} (d.src/transact @data-source tx)
-         [new-tx new-views-fired] (process-tx ::views tx-data views-fired)
-         already-fired (set/intersection views-fired new-views-fired)]
-     (assert (empty? already-fired) (str "Views fired more than once!" already-fired))
-     (if (seq new-tx)
-       (transact* new-tx (into views-fired new-views-fired))
-       ret))))
+(defn- transact* [tx]
+  (loop [db (d.src/get-db @data-source) tx tx total-tx tx views-fired #{}]
+    (let [{:keys [tx-data db-after]} (d.src/with @data-source db tx)
+          [new-tx new-views-fired] (process-tx tx-data views-fired)
+          already-fired (set/intersection views-fired new-views-fired)]
+      (assert (empty? already-fired) (str "Views fired more than once!" already-fired))
+      (if (seq new-tx)
+        (recur db-after
+               new-tx
+               (into total-tx new-tx)
+               (into views-fired new-views-fired))
+        total-tx))))
 
 
 (defn transact [tx]
@@ -215,7 +215,7 @@
   (doseq [[_ {:keys [state]}] @circuits]
     (c.state/start-checkpoint! state))
   (try
-    (transact* tx)
+    (d.src/transact @data-source (transact* tx))
     (catch #?(:clj Exception :cljs js/Error) e
       (prn "rolling back circuits")
       (doseq [[_ {:keys [state]}] @circuits]
