@@ -57,3 +57,5 @@
                    ;; this allows nrepl to interrupt runaway repl evals
                    :jvm-opts ["-Djdk.attach.allowAttachSelf"]
                    :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}}}
+
+;; clojure -Sdeps '{:deps {aysylu/loom {:mvn/version "1.0.2"}}}' -M:test:dev -e "(run! require '[wizard.circuit-test wizard.lmdb.circuit-test wizard.rocksdb.circuit-test]) (clojure.test/run-tests 'wizard.circuit-test 'wizard.lmdb.circuit-test 'wizard.rocksdb.circuit-test)"

@@ -2,7 +2,7 @@
   (:require [clojure.tools.build.api :as b]))
 
 (def lib 'net.clojars.jumraiya/wizard)
-(def version "0.1.31")
+(def version "0.1.311")
 (def class-dir "target/classes")
 (def basis (b/create-basis {:project "deps.edn"}))
 (def jar-file (format "target/net.clojars.jumraiya/%s-%s.jar" (name lib) version))

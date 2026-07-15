@@ -86,6 +86,7 @@
 (defn dump-circuit [circuit]
   (dump-debug-data (atom (init-debug-data circuit))))
 
+
 (defn compare-states [circuit c-state caudex-impl inline-impl transactions]
   (let [debug-data (atom (init-debug-data circuit))
         ops-order (utils/topsort-circuit circuit)]
@@ -93,7 +94,7 @@
      (fn [[caudex-impl c-state] tx]
        (prn "tx" tx)
        (let [caudex-impl (c.impl/step caudex-impl tx)
-             _ (inline-impl c-state tx)
+             res (inline-impl c-state tx)
              recode-stream-data (fn [data]
                                   (into
                                    {}
@@ -107,64 +108,204 @@
                                         (map #(let [op-id (dbsp/-get-id %)]
                                                 [op-id (state/getv c-state op-id)]))
                                         ops-order))]
+         (prn "inline res" res "caudex res" (caudex.impl.circuit/get-last-output caudex-impl))
+         (prn "view" (state/get-view c-state))
+                                        ;(clojure.pprint/pprint (caudex.impl.circuit/get-last-output caudex-impl))
          (doseq [op ops-order]
            (let [ref-output-stream (first (get-in caudex-impl [:op-stream-map (dbsp/-get-id op) :outputs]))
                  ref-data (last (get (:streams caudex-impl) ref-output-stream))
                  op-data (state/getv c-state (dbsp/-get-id op))
+                 #_(state/getv c-state (dbsp/-get-id op))
                  stream-data (recode-stream-data
-                              (if #?(:clj (instance? OpStateRef op-data)
-                                     :cljs (instance? state/OpStateRef op-data))
-                                (state/getv c-state (:ref-op-id op-data))
-                                op-data))]
+                              op-data
+                              #_(if #?(:clj (instance? OpStateRef op-data)
+                                       :cljs (instance? state/OpStateRef op-data))
+                                  (state/getv c-state (:ref-op-id op-data))
+                                  op-data))]
                                         ;(prn (dbsp/-get-id op) stream-data)
              (dump-debug-data debug-data)
              (caudex.utils/circuit->map (assoc caudex-impl :circuit circuit))
-             ;(throw (Exception. "asd"))
-             (prn (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data))
-             #_(when (not= stream-data ref-data)
-                 (throw
+                                        ;(throw (Exception. "asd"))
+             (when (not= stream-data ref-data)
+               (prn (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data))
+               #_(throw
                   (ex-info
                    (str "mismatch in " (dbsp/-get-id op) " " stream-data " " ref-data)
                    {:tx tx})))))
-         [caudex-impl c-state]))
+         [caudex-impl c-state]
+         #_[caudex-impl c-state]))
      [caudex-impl c-state]
      transactions)))
 
 (comment
   (def circuit
     (c/build-circuit
-     '[:find ?p ?div ?len
+     '[:find ?a ?a-val ?m ?o ?p ?p-name ?p-type ?p-val-long ?p-val-string ?p-val-double
+       :in $ %
        :where
-       [?p :player/div ?div]
-       [?p :player/len ?len]]))
+       [?a :action/measure ?m]
+       [?a :action/offset ?o]
+       [?a :action/value ?a-val]
+       [?a :action/seq ?seq]
+       [?seq :seq/active true]
+       (or-join [?seq ?a ?p ?p-type ?p-name ?p-val-long ?p-val-string ?p-val-double]
+                (and
+                 [?p :param/parent ?seq]
+                 [?p :param/name ?p-name]
+                 (not-join [?p ?a ?p-name]
+                           [?p :param/name ?p-name]
+                           [?p :param/parent ?a])
+                 (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+                (and
+                 [?p :param/parent ?a]
+                 [?p :param/name ?p-name]
+                 (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+                (and
+                 (not-join [?a ?seq]
+                           (or-join [?a ?seq]
+                                    [?p :param/parent ?a]
+                                    [?p :param/parent ?seq]))
+                 [(ground -1) ?p]
+                 [(ground "") ?p-name]
+                 [(ground :none) ?p-type]
+                 [(ground -1) ?p-val-long]
+                 [(ground "") ?p-val-string]
+                 [(ground 0.0) ?p-val-double]))]
+     '[[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
+        [?p :param/value ?pv]
+        [?p :param/type ?p-type]
+        (or-join [?p ?p-type ?pv ?p-val-long ?p-val-string ?p-val-double]
+                 (and
+                  [(= ?p-type :long)]
+                  [?pv :param.value/long ?p-val-long]
+                  [(ground "") ?p-val-string]
+                  [(ground 0.0) ?p-val-double])
+                 (and
+                  [(= ?p-type :string)]
+                  [?pv :param.value/string ?p-val-string]
+                  [(ground 0) ?p-val-long]
+                  [(ground 0.0) ?p-val-double])
+                 (and
+                  [(= ?p-type :double)]
+                  [?pv :param.value/double ?p-val-double]
+                  [(ground 0) ?p-val-long]
+                  [(ground "") ?p-val-string]))]]))
   (def tes
     (v/query->view
-     [:find ?p ?div ?len
+     [:find ?a ?a-val ?m ?o ?p ?p-name ?p-type ?p-val-long ?p-val-string ?p-val-double
+      :in $ %
       :where
-      [?p :player/div ?div]
-      [?p :player/len ?len]]))
+      [?a :action/measure ?m]
+      [?a :action/offset ?o]
+      [?a :action/value ?a-val]
+      [?a :action/seq ?seq]
+      [?seq :seq/active true]
+      (or-join [?seq ?a ?p ?p-type ?p-name ?p-val-long ?p-val-string ?p-val-double]
+               (and
+                [?p :param/parent ?seq]
+                [?p :param/name ?p-name]
+                (not-join [?p ?a ?p-name]
+                          [?p :param/name ?p-name]
+                          [?p :param/parent ?a])
+                (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+               (and
+                [?p :param/parent ?a]
+                [?p :param/name ?p-name]
+                (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+               (and
+                (not-join [?a ?seq]
+                          (or-join [?a ?seq]
+                                   [?p :param/parent ?a]
+                                   [?p :param/parent ?seq]))
+                [(ground -1) ?p]
+                [(ground "") ?p-name]
+                [(ground :none) ?p-type]
+                [(ground -1) ?p-val-long]
+                [(ground "") ?p-val-string]
+                [(ground 0.0) ?p-val-double]))]
+     [[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
+       [?p :param/value ?pv]
+       [?p :param/type ?p-type]
+       (or-join [?p ?p-type ?pv ?p-val-long ?p-val-string ?p-val-double]
+                (and
+                 [(= ?p-type :long)]
+                 [?pv :param.value/long ?p-val-long]
+                 [(ground "") ?p-val-string]
+                 [(ground 0.0) ?p-val-double])
+                (and
+                 [(= ?p-type :string)]
+                 [?pv :param.value/string ?p-val-string]
+                 [(ground 0) ?p-val-long]
+                 [(ground 0.0) ?p-val-double])
+                (and
+                 [(= ?p-type :double)]
+                 [?pv :param.value/double ?p-val-double]
+                 [(ground 0) ?p-val-long]
+                 [(ground "") ?p-val-string]))]]))
+
+  (wizard.views/query->view
+   [:find ?slot ?ring ?num ?measure ?offset ?div ?len ?active
+    ?p-div ?p-len
+    :in $ %
+    :where
+    [?slot :ui.slot/ring ?ring]
+    [?slot :ui.slot/measure ?measure]
+    [?slot :ui.slot/offset ?offset]
+    [?ring :ui.ring/seq ?seq]
+    [?ring :ui.ring/num ?num]
+    [?seq :seq/active ?active]
+    [?seq :seq/div ?div]
+    [?seq :seq/len ?len]
+    (player-state ?p ?p-div ?p-len)]
+   [[(player-state ?p ?p-div ?p-len)
+     [?p :player/div ?p-div]
+     [?p :player/len ?p-len]]])
                                         ;(def c-state (l.state/lmdb-state "/tmp/bench-test" circuit))
   (def c-state (state/atom-state circuit))
   (state/get-view c-state)
   ;; (spit "/tmp/circ.edn" (utils/circuit->edn circuit))
   ;; (def circuit (utils/edn->circuit (slurp "/tmp/circ.edn")))
-  (let [transactions [[[1 :player/div 4 123 true]
-                       [1 :player/len [1 0] 123 true]]
-                      [[1 :player/div 4 123 false]
-                       [1 :player/len [1 0] 123 false]
-                       [1 :player/div 3 124  true]
-                       [1 :player/len [3 2] 124 true]]]
-        ;; caudex-impl (c.impl/reify-circuit circuit)
-        ;; inline-impl (impl-inline/reify-circuit wizard.circuit.debug/circuit)
-        caudex-impl (c.impl/reify-circuit (:circuit tes))
-        inline-impl (:circuit-fn tes)
-        c-state (state/atom-state (:circuit tes))
+  (let [transactions [[[2 :seq/name "test-2" 536870914 true]
+                       [2 :seq/div 3 536870914 true]
+                       [2 :seq/len [1 0] 536870914 true]
+                       [2 :seq/active true 536870914 true]]
+                      [[3 :ui.ring/num 2 536870915 true]
+                       [3 :ui.ring/seq 2 536870915 true]
+                       [1 :player/div 4 536870915 false]
+                       [1 :player/div 3 536870915 true]]
+                      [[4 :ui.slot/ring 3 536870916 true]
+                       [4 :ui.slot/offset 0 536870916 true]
+                       [4 :ui.slot/measure 0 536870916 true]
+                       [5 :ui.slot/ring 3 536870916 true]
+                       [5 :ui.slot/offset 1 536870916 true]
+                       [5 :ui.slot/measure 0 536870916 true]
+                       [6 :ui.slot/ring 3 536870916 true]
+                       [6 :ui.slot/offset 2 536870916 true]
+                       [6 :ui.slot/measure 0 536870916 true]]
+                      [[7 :action/measure 0 536870915 true]
+                       [7 :action/offset 0 536870915 true]
+                       [7 :action/seq 2 536870915 true]
+                       [7 :action/value "A3" 536870915 true]]
+                      [[8 :param/parent 2 536870916 true]
+                       [8 :param/type :double 536870916 true]
+                       [8 :param/value 9 536870916 true]
+                       [8 :param/name "param" 536870916 true]
+                       [9 :param.value/double 3.4 536870916 true]]
+                      [[10 :param/parent 7 536870917 true]
+                       [10 :param/type :double 536870917 true]
+                       [10 :param/value 11 536870917 true]
+                       [10 :param/name "param" 536870917 true]
+                       [11 :param.value/double 2.4 536870917 true]]]
+        caudex-impl (c.impl/reify-circuit circuit)
+        inline-impl (impl-inline/reify-circuit wizard.circuit.debug/circuit)
+        ;; caudex-impl (c.impl/reify-circuit (:circuit tes))
+        ;; inline-impl (:circuit-fn tes)
+        ;; c-state (state/atom-state (:circuit tes))
         ;; c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
-        ;; c-state (state/atom-state circuit)
+        c-state (state/atom-state circuit)
         ]
-    ;(compare-states circuit c-state caudex-impl inline-impl transactions)
-    (compare-states (:circuit tes) c-state caudex-impl inline-impl transactions)
-    )
+    (compare-states circuit c-state caudex-impl inline-impl transactions)
+    #_(compare-states (:circuit tes) c-state caudex-impl inline-impl transactions))
 
   (dump-circuit)
 

@@ -46,6 +46,8 @@
   (let [change-sets (into {}
                           (map
                            (fn [[id {:keys [circuit state]}]]
+                             (when *debug-transact*
+                               (prn "id" id))
                              (let [output (if (some? state)
                                             (circuit state tx-data)
                                             (circuit tx-data))
