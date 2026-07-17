@@ -94,10 +94,11 @@
                             (if (:initializing? opts)
                               (update batch :puts #(conj % [(:tuple row) (:wt row)]))
                               (cond
-                                (nil? cur-wt)
+                                (true? (:wt row))
                                 (update batch :puts #(conj % [(:tuple row) (:wt row)]))
-                                (not= cur-wt (:wt row))
-                                (update batch :dels #(conj % (:tuple row)))))))
+                                (and cur-wt (false? (:wt row)))
+                                (update batch :dels #(conj % (:tuple row)))
+                                :else batch))))
                         {:puts [] :dels []}
                         delta)]))
                    {}

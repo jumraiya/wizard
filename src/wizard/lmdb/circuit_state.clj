@@ -96,8 +96,9 @@
                                (l/put-txn op-ctx txn (:tuple row) (:wt row))
                                (let [cur-wt (l/get-val-txn op-ctx txn (:tuple row))]
                                  (cond
-                                   (nil? cur-wt) (l/put-txn op-ctx txn (:tuple row) (:wt row))
-                                   (not= cur-wt (:wt row)) (l/delete-txn op-ctx txn (:tuple row))))))
+                                   (true? (:wt row)) (l/put-txn op-ctx txn (:tuple row) (:wt row))
+                                   (not= cur-wt (:wt row)) (l/delete-txn op-ctx txn (:tuple row))
+                                   :else nil))))
                            (.commit txn))
                          (when (:time-io? opts)
                            (swap! (:io-time opts)

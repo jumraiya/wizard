@@ -111,120 +111,114 @@
         base)))
 
 (defrecord AtomCircuitState
-    [^clojure.lang.Atom state]
+           [^clojure.lang.Atom state]
 
-    CircuitState
+  CircuitState
 
-    (init-tx [_] {})
+  (init-tx [_] {})
 
+  (getv
+    [this op-id]
+    (clojure.core/get @(:state this) op-id))
 
-    (getv
-      [this op-id]
-      (clojure.core/get @(:state this) op-id))
+  (getv
+    [this tx op-id]
+    (getv* state tx op-id))
 
+  (slice
+    [this tx op-id lookup-key]
+    (slice* this tx op-id lookup-key))
 
-    (getv
-      [this tx op-id]
-      (getv* state tx op-id))
+  (put
+    [_ tx op-id zset]
+    (if (contains? (:deltas tx) op-id)
+      #?(:cljs (js/Error. "Trying to reset a delta state!")
+         :clj (throw (Exception. "Trying to reset a delta state!")))
+      (assoc tx op-id zset)))
 
+  (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
 
-    (slice
-      [this tx op-id lookup-key]
-      (slice* this tx op-id lookup-key))
+  (commit
+    [this tx]
+    (upd this tx)
+    (swap! state
+           (fn [state]
+             (cond-> state
+               true
+               (update :view
+                       (fn [view]
+                         (persistent!
+                          (reduce
+                           #(if (contains? %1 (:tuple %2))
+                              (if (false? (:wt %2))
+                                (disj! %1 (:tuple %2))
+                                %1)
+                              (if (true? (:wt %2))
+                               (conj! %1 (:tuple %2))
+                               %1))
+                           (transient view)
+                           (get tx (:output-op state))))))
+               true
+               (assoc :last-processed-tx (some-> tx :tx-data last (nth 3)))
+               (:checkpoint-enabled? state)
+               (update :tx-since-checkpoint
+                       conj (assoc-in tx [:deltas :view]
+                                      (-> state :output-op tx))))))
+    nil)
 
+  (get-view
+    [_this]
+    (-> @state :view))
 
-    (put
-      [_ tx op-id zset]
-      (if (contains? (:deltas tx) op-id)
-        #?(:cljs (js/Error. "Trying to reset a delta state!")
-           :clj (throw (Exception. "Trying to reset a delta state!")))
-        (assoc tx op-id zset)))
+  (get-last-processed-tx
+    [_]
+    (:last-processed-tx @state))
 
+  (start-checkpoint! [_]
+    (when (:checkpoint-enabled? @state)
+      #?(:cljs (throw (js/Error. "Checkpoint aleady enabled!"))
+         :clj (throw (Exception. "Checkpoint already enabled!"))))
+    (swap! state
+           (fn [s]
+             (assoc s
+                    :checkpoint-enabled? true
+                    :tx-since-checkpoint []))))
 
-    (add [_ tx op-id delta] (assoc-in tx [:deltas op-id] delta))
+  (stop-checkpoint! [_]
+    (swap! state dissoc :checkpoint-enabled?))
 
+  (cleanup-checkpoint! [_]
+    (swap! state dissoc :tx-since-checkpoint))
 
-    (commit
-      [this tx]
-      (upd this tx)
-      (swap! state
-             (fn [state]
-               (cond-> state
-                 true
-                 (update :view
-                         (fn [view]
-                           (persistent!
-                            (reduce
-                             #(if (contains? %1 (:tuple %2))
-                                (if (false? (:wt %2))
-                                  (disj! %1 (:tuple %2))
-                                  %1)
-                                (conj! %1 (:tuple %2)))
-                             (transient view)
-                             (get tx (:output-op state))))))
-                 true
-                 (assoc :last-processed-tx (some-> tx :tx-data last (nth 3)))
-                 (:checkpoint-enabled? state)
-                 (update :tx-since-checkpoint
-                         conj (assoc-in tx [:deltas :view]
-                                        (-> state :output-op tx))))))
-      nil)
+  (get-tx-since-checkpoint [_]
+    (:tx-since-checkpoint @state))
 
+  (rollback-to-checkpoint! [_]
+    (swap! state
+           (fn [s]
+             (reduce
+              (fn [s tx]
+                (reduce
+                 (fn [s [op-id delta]]
+                   (if (= op-id :view)
+                     (update s op-id
+                             #(into (sset/sorted-set)
+                                    (map :tuple)
+                                    (zs/add-zset
+                                     (into (sset/sorted-set)
+                                           (map (fn [e] (zs/mk-zset-entry e true)))
+                                           %)
+                                     (mapv (fn [row] (update row :wt not)) delta))))
+                     (update s op-id
+                             #(zs/add-zset
+                               %
+                               (mapv (fn [row] (update row :wt not)) delta)))))
+                 s
+                 (-> tx :deltas reverse)))
+              s
+              (:tx-since-checkpoint s)))))
 
-    (get-view
-      [_this]
-      (-> @state :view))
-
-
-    (get-last-processed-tx
-      [_]
-      (:last-processed-tx @state))
-
-    (start-checkpoint! [_]
-      (when (:checkpoint-enabled? @state)
-        #?(:cljs (throw (js/Error. "Checkpoint aleady enabled!"))
-           :clj (throw (Exception. "Checkpoint already enabled!"))))
-      (swap! state
-             (fn [s]
-               (assoc s
-                      :checkpoint-enabled? true
-                      :tx-since-checkpoint []))))
-
-    (stop-checkpoint! [_]
-      (swap! state dissoc :checkpoint-enabled?))
-
-    (cleanup-checkpoint! [_]
-      (swap! state dissoc :tx-since-checkpoint))
-
-    (get-tx-since-checkpoint [_]
-      (:tx-since-checkpoint @state))
-    
-    (rollback-to-checkpoint! [_]
-      (swap! state
-             (fn [s]
-               (reduce
-                (fn [s tx]
-                  (reduce
-                   (fn [s [op-id delta]]
-                     (if (= op-id :view)
-                         (update s op-id
-                                 #(into (sset/sorted-set)
-                                        (map :tuple)
-                                        (zs/add-zset
-                                         (into (sset/sorted-set)
-                                               (map (fn [e] (zs/mk-zset-entry e true)))
-                                               %)
-                                         (mapv (fn [row] (update row :wt not)) delta))))
-                         (update s op-id
-                                 #(zs/add-zset
-                                   %
-                                   (mapv (fn [row] (update row :wt not)) delta)))))
-                   s
-                   (-> tx :deltas reverse)))
-                s
-                (:tx-since-checkpoint s)))))
-    
-    (close [_]))
+  (close [_]))
 
 
 (defn atom-state
