@@ -154,8 +154,8 @@
                                 (disj! %1 (:tuple %2))
                                 %1)
                               (if (true? (:wt %2))
-                               (conj! %1 (:tuple %2))
-                               %1))
+                                (conj! %1 (:tuple %2))
+                                %1))
                            (transient view)
                            (get tx (:output-op state))))))
                true
@@ -224,4 +224,7 @@
 (defn atom-state
   [circuit]
   (let [last-op (last (utils/topsort-circuit circuit))]
-    (->AtomCircuitState (atom {:output-op (dbsp/-get-id last-op) :view (sset/sorted-set)}))))
+    (->AtomCircuitState (atom {:output-op (dbsp/-get-id last-op)
+                               :view (zs/mk-view-zset last-op)
+                               ;(sset/sorted-set)
+                               }))))

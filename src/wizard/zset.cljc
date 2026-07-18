@@ -81,6 +81,22 @@
     ;;    :cljs cmp)
     ))
 
+(defn mk-simple-comparator [indices]
+  (fn [row-1 row-2]
+    (loop [idx (first indices) indices (rest indices)]
+      (let [val-1 (nth row-1 idx)
+            val-2 (nth row-2 idx)
+            r (if (or (= val-1 :*) (= val-2 :*))
+                0
+                (if (= (type val-1) (type val-2))
+                  (compare val-1 val-2)
+                            ;; TODO enforce same types in zset entries?
+                  (compare (str val-1) (str val-2)))
+                #_(compare val-1 val-2))]
+        (if (and (= r 0) (seq indices))
+          (recur (first indices) (rest indices))
+          r)))))
+
 (defn tx-data->zset [tx-data]
   (apply sset/sorted-set (mapv (fn [[e a v _tx add?]]
                                  [e a v add?])
@@ -131,6 +147,11 @@
 (defn mk-op-zset [op]
   (sset/sorted-set-by
    (mk-comparator (-> op dbsp/-get-output-type dbsp/-to-vector count inc range))))
+
+(defn mk-view-zset [op]
+  (sset/sorted-set-by
+   (mk-simple-comparator (-> op dbsp/-get-output-type dbsp/-to-vector count range))))
+
 
 (defn- get-join-indices [integrated-vars other-vars]
   (into []
