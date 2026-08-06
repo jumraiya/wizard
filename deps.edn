@@ -56,6 +56,14 @@
                    :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
                    ;; this allows nrepl to interrupt runaway repl evals
                    :jvm-opts ["-Djdk.attach.allowAttachSelf"]
-                   :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}}}
+                   :main-opts ["-m" "nrepl.cmdline" "--port" "7888"]}
+
+           ;; Background watcher: regenerates circuit .cljc when the config file changes.
+           ;; Usage (from wizard checkout):
+           ;;   clojure -M:watch-circuits path/to/config.clj
+           ;;   clojure -X:watch-circuits :config '"path/to/config.clj"'
+           :watch-circuits {:extra-paths ["examples"]
+                            :main-opts  ["-m" "wizard.circuit.watch"]
+                            :exec-fn    wizard.circuit.watch/watch}}}
 
 ;; clojure -Sdeps '{:deps {aysylu/loom {:mvn/version "1.0.2"}}}' -M:test:dev -e "(run! require '[wizard.circuit-test wizard.lmdb.circuit-test wizard.rocksdb.circuit-test]) (clojure.test/run-tests 'wizard.circuit-test 'wizard.lmdb.circuit-test 'wizard.rocksdb.circuit-test)"

@@ -342,7 +342,11 @@
 (defmacro edn->circuit
   ([edn] `(edn->circuit ~edn nil))
   ([edn target]
-   (let [circuit (utils/edn->circuit edn)
+   (let [edn-val (cond
+                   (string? edn) (edn/read-string edn)
+                   (and (seq? edn) (= 'quote (first edn))) (second edn)
+                   :else edn)
+         circuit (utils/edn->circuit edn-val)
          cljs? (if (some? target)
                  (= target :cljs)
                  (some? (:ns &env)))]

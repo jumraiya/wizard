@@ -8,6 +8,7 @@
    [wizard.circuit-impl-inline :as impl-inline]
    [clojure.set :as set]
    [wizard.circuit.state :as c.state]
+   #?(:clj [wizard.circuit.codegen :as codegen])
    [wizard.config :as config]
    [wizard.data-source :as d.src]
    #?(:clj [wizard.lmdb.circuit-state :as l])
@@ -231,30 +232,11 @@
 
 
 (defn get-view
-  "Retrieves the current materialized view data for a given view ID.
-
-  Args:
-    id - The view identifier
-
-  Returns:
-    A set of tuples representing the current view state, or nil if the view
-    doesn't exist."
   [id]
   (c.state/get-view (get-in @circuits [id :state])))
 
 
 (defn subscribe-to-view
-  "Subscribes a callback function to changes in a view.
-
-  Args:
-    id       - The view identifier to subscribe to
-    callback - A function that will be called with (asserts, retracts, view)
-               whenever the view changes
-
-  The callback receives three arguments:
-    - asserts:  Vector of tuples that were added to the view
-    - retracts: Vector of tuples that were removed from the view
-    - view:     The complete current view state"
   [id callback]
   (swap! subscriptions update id #(conj % callback)))
 
@@ -286,6 +268,49 @@
 
 
 #?(:clj (def datomic-source d.src/datomic-source))
+
+#?(:clj
+   (defn load-precompiled-conf
+     "Like `load-from-conf`, but instead of runtime-eval'ing `reify-circuit`,
+     loads pre-generated source files produced by `wizard.circuit.codegen/generate!`
+     and installs each circuit's pre-baked function via `add-compiled-view`.
+
+     Each circuit lives in its own namespace `<prefix>.<circuit-id>` and defines
+     `circuit-fn`. When :wizard/circuit-ns-prefix is set, child nses are loaded
+     via `require`; otherwise child files are `load-file`d from the workspace.
+
+     `generate!` is invoked first (idempotent): it only touches artifacts whose
+     query source has actually changed or whose child file is missing/stale.
+     Set `:reload? true` to force reload of already-loaded child namespaces.
+     Set `:force? true` to force regeneration of all circuits."
+     [{:wizard/keys [workspace-dir circuits circuit-ns-prefix] :as conf} & {:keys [reload? force?]}]
+     (config/ensure-config-valid conf)
+     (codegen/generate! conf :force? force?)
+     (let [data-dir (.resolve (Paths/get (URI/create (str "file://" workspace-dir)))
+                              "data")
+           edn-dir  (.resolve (Paths/get (URI/create (str "file://" workspace-dir)))
+                              "definitions")]
+       (doseq [[c-name {:wizard.storage/keys [type]}] circuits]
+         (let [child-ns   (codegen/child-ns-sym conf c-name)
+               _          (if circuit-ns-prefix
+                            (if reload?
+                              (require child-ns :reload)
+                              (require child-ns))
+                            (load-file (.getAbsolutePath ^java.io.File (codegen/child-file conf c-name))))
+               circuit-fn @(or (ns-resolve child-ns 'circuit-fn)
+                               (throw (ex-info "Generated ns missing `circuit-fn`"
+                                               {:ns child-ns :id c-name})))
+               c-edn-path (.resolve ^Path edn-dir (str (name c-name) ".edn"))
+               circuit    (c.utils/edn->circuit
+                           (edn/read-string (slurp (-> c-edn-path (.toAbsolutePath) (.toString)))))
+               c-data-path (.resolve ^Path data-dir (name c-name))]
+           (add-compiled-view
+            c-name
+            {:circuit circuit
+             :circuit-fn circuit-fn
+             :storage-type type
+             :data-dir (-> c-data-path (.toAbsolutePath) (.toString))}))))))
+
 
 #?(:clj
    (defn load-from-conf
