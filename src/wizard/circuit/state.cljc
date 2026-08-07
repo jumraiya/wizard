@@ -228,3 +228,8 @@
                                :view (zs/mk-view-zset last-op)
                                ;(sset/sorted-set)
                                }))))
+(defmacro mk-atom-state
+  [circuit]
+  (let [last-op (last (utils/topsort-circuit circuit))]
+    `(->AtomCircuitState (atom {:output-op '~(dbsp/-get-id last-op)
+                                :view (zs/gen-op-zset ~last-op)}))))

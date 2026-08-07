@@ -183,18 +183,20 @@
         :cljs (sync-body)))))
 
 (defn add-compiled-view
-  [id {:keys [circuit circuit-fn data-dir storage-type]}
+  [id {:keys [circuit circuit-fn circuit-state data-dir storage-type]}
    & {:keys [args] :or {args {}}}]
   (let [prev-state (get-in @circuits [id :state])
         _ (when prev-state
             (c.state/close prev-state))
-        c-state #?(:clj (case storage-type
-                          :wizard.storage/lmdb
-                          (l/lmdb-state data-dir circuit)
-                          :wizard.storage/rocksdb
-                          (r/rocksdb-state data-dir circuit)
-                          (c.state/atom-state circuit))
-                   :cljs (c.state/atom-state circuit))]
+        c-state (or
+                 circuit-state
+                 #?(:clj (case storage-type
+                           :wizard.storage/lmdb
+                           (l/lmdb-state data-dir circuit)
+                           :wizard.storage/rocksdb
+                           (r/rocksdb-state data-dir circuit)
+                           (c.state/atom-state circuit))
+                    :cljs (c.state/atom-state circuit)))]
     (swap! circuits assoc id {:circuit circuit-fn :state c-state})
     (swap! subscriptions assoc id [])))
 

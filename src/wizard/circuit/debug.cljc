@@ -152,25 +152,25 @@
                 (and
                  [?p :param/parent ?seq]
                  [?p :param/name ?p-name]
-                 (not-join [?p ?a ?p-name]
-                           [?p :param/name ?p-name]
-                           [?p :param/parent ?a])
+                 (not-join [?a ?p-name]
+                           [?p2 :param/name ?p-name]
+                           [?p2 :param/parent ?a])
                  (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
                 (and
                  [?p :param/parent ?a]
                  [?p :param/name ?p-name]
                  (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
                 (and
-                 (not-join [?a ?seq]
-                           (or-join [?a ?seq]
-                                    [?p :param/parent ?a]
-                                    [?p :param/parent ?seq]))
-                 [(ground -1) ?p]
-                 [(ground "") ?p-name]
-                 [(ground :none) ?p-type]
-                 [(ground -1) ?p-val-long]
-                 [(ground "") ?p-val-string]
-                 [(ground 0.0) ?p-val-double]))]
+                   (not-join [?a ?seq]
+                             (or-join [?a ?seq]
+                                      [?p3 :param/parent ?a]
+                                      [?p3 :param/parent ?seq]))
+                   [(ground -1) ?p]
+                   [(ground "") ?p-name]
+                   [(ground :none) ?p-type]
+                   [(ground -1) ?p-val-long]
+                   [(ground "") ?p-val-string]
+                   [(ground 0.0) ?p-val-double]))]
      '[[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
         [?p :param/value ?pv]
         [?p :param/type ?p-type]
@@ -190,58 +190,58 @@
                   [?pv :param.value/double ?p-val-double]
                   [(ground 0) ?p-val-long]
                   [(ground "") ?p-val-string]))]]))
-  (def tes
-    (v/query->view
-     [:find ?a ?a-val ?m ?o ?p ?p-name ?p-type ?p-val-long ?p-val-string ?p-val-double
-      :in $ %
-      :where
-      [?a :action/measure ?m]
-      [?a :action/offset ?o]
-      [?a :action/value ?a-val]
-      [?a :action/seq ?seq]
-      [?seq :seq/active true]
-      (or-join [?seq ?a ?p ?p-type ?p-name ?p-val-long ?p-val-string ?p-val-double]
-               (and
-                [?p :param/parent ?seq]
-                [?p :param/name ?p-name]
-                (not-join [?p ?a ?p-name]
-                          [?p :param/name ?p-name]
-                          [?p :param/parent ?a])
-                (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
-               (and
-                [?p :param/parent ?a]
-                [?p :param/name ?p-name]
-                (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
-               (and
-                (not-join [?a ?seq]
-                          (or-join [?a ?seq]
-                                   [?p :param/parent ?a]
-                                   [?p :param/parent ?seq]))
-                [(ground -1) ?p]
-                [(ground "") ?p-name]
-                [(ground :none) ?p-type]
-                [(ground -1) ?p-val-long]
-                [(ground "") ?p-val-string]
-                [(ground 0.0) ?p-val-double]))]
-     [[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
-       [?p :param/value ?pv]
-       [?p :param/type ?p-type]
-       (or-join [?p ?p-type ?pv ?p-val-long ?p-val-string ?p-val-double]
-                (and
-                 [(= ?p-type :long)]
-                 [?pv :param.value/long ?p-val-long]
-                 [(ground "") ?p-val-string]
-                 [(ground 0.0) ?p-val-double])
-                (and
-                 [(= ?p-type :string)]
-                 [?pv :param.value/string ?p-val-string]
-                 [(ground 0) ?p-val-long]
-                 [(ground 0.0) ?p-val-double])
-                (and
-                 [(= ?p-type :double)]
-                 [?pv :param.value/double ?p-val-double]
-                 [(ground 0) ?p-val-long]
-                 [(ground "") ?p-val-string]))]]))
+  #_(def tes
+      (v/query->view
+       [:find ?a ?a-val ?m ?o ?p ?p-name ?p-type ?p-val-long ?p-val-string ?p-val-double
+        :in $ %
+        :where
+        [?a :action/measure ?m]
+        [?a :action/offset ?o]
+        [?a :action/value ?a-val]
+        [?a :action/seq ?seq]
+        [?seq :seq/active true]
+        (or-join [?seq ?a ?p ?p-type ?p-name ?p-val-long ?p-val-string ?p-val-double]
+                 (and
+                  [?p :param/parent ?seq]
+                  [?p :param/name ?p-name]
+                  (not-join [?p ?a ?p-name]
+                            [?p :param/name ?p-name]
+                            [?p :param/parent ?a])
+                  (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+                 (and
+                  [?p :param/parent ?a]
+                  [?p :param/name ?p-name]
+                  (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+                 (and
+                  (not-join [?a ?seq]
+                            (or-join [?a ?seq]
+                                     [?p :param/parent ?a]
+                                     [?p :param/parent ?seq]))
+                  [(ground -1) ?p]
+                  [(ground "") ?p-name]
+                  [(ground :none) ?p-type]
+                  [(ground -1) ?p-val-long]
+                  [(ground "") ?p-val-string]
+                  [(ground 0.0) ?p-val-double]))]
+       [[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
+         [?p :param/value ?pv]
+         [?p :param/type ?p-type]
+         (or-join [?p ?p-type ?pv ?p-val-long ?p-val-string ?p-val-double]
+                  (and
+                   [(= ?p-type :long)]
+                   [?pv :param.value/long ?p-val-long]
+                   [(ground "") ?p-val-string]
+                   [(ground 0.0) ?p-val-double])
+                  (and
+                   [(= ?p-type :string)]
+                   [?pv :param.value/string ?p-val-string]
+                   [(ground 0) ?p-val-long]
+                   [(ground 0.0) ?p-val-double])
+                  (and
+                   [(= ?p-type :double)]
+                   [?pv :param.value/double ?p-val-double]
+                   [(ground 0) ?p-val-long]
+                   [(ground "") ?p-val-string]))]]))
 
   (wizard.views/query->view
    [:find ?slot ?ring ?num ?measure ?offset ?div ?len ?active
@@ -265,49 +265,126 @@
   (state/get-view c-state)
   ;; (spit "/tmp/circ.edn" (utils/circuit->edn circuit))
   ;; (def circuit (utils/edn->circuit (slurp "/tmp/circ.edn")))
-  (let [transactions [[[2 :seq/name "test-2" 536870914 true]
-                       [2 :seq/div 3 536870914 true]
-                       [2 :seq/len [1 0] 536870914 true]
-                       [2 :seq/active true 536870914 true]]
-                      [[3 :ui.ring/num 2 536870915 true]
-                       [3 :ui.ring/seq 2 536870915 true]
-                       [1 :player/div 4 536870915 false]
-                       [1 :player/div 3 536870915 true]]
-                      [[4 :ui.slot/ring 3 536870916 true]
-                       [4 :ui.slot/offset 0 536870916 true]
-                       [4 :ui.slot/measure 0 536870916 true]
-                       [5 :ui.slot/ring 3 536870916 true]
-                       [5 :ui.slot/offset 1 536870916 true]
-                       [5 :ui.slot/measure 0 536870916 true]
-                       [6 :ui.slot/ring 3 536870916 true]
-                       [6 :ui.slot/offset 2 536870916 true]
-                       [6 :ui.slot/measure 0 536870916 true]]
-                      [[7 :action/measure 0 536870915 true]
-                       [7 :action/offset 0 536870915 true]
-                       [7 :action/seq 2 536870915 true]
-                       [7 :action/value "A3" 536870915 true]]
-                      [[8 :param/parent 2 536870916 true]
-                       [8 :param/type :double 536870916 true]
-                       [8 :param/value 9 536870916 true]
-                       [8 :param/name "param" 536870916 true]
-                       [9 :param.value/double 3.4 536870916 true]]
-                      [[10 :param/parent 7 536870917 true]
-                       [10 :param/type :double 536870917 true]
-                       [10 :param/value 11 536870917 true]
-                       [10 :param/name "param" 536870917 true]
-                       [11 :param.value/double 2.4 536870917 true]]]
-        caudex-impl (c.impl/reify-circuit circuit)
+  (def tx-data
+    [[[2 :seq/name "test-2" 536870914 true]
+      [2 :seq/div 3 536870914 true]
+      [2 :seq/len [1 0] 536870914 true]
+      [2 :seq/active true 536870914 true]]
+     #_[[3 :ui.ring/num 2 536870915 true]
+        [3 :ui.ring/seq 2 536870915 true]
+        [1 :player/div 4 536870915 false]
+        [1 :player/div 3 536870915 true]]
+     #_[[4 :ui.slot/ring 3 536870916 true]
+        [4 :ui.slot/offset 0 536870916 true]
+        [4 :ui.slot/measure 0 536870916 true]
+        [5 :ui.slot/ring 3 536870916 true]
+        [5 :ui.slot/offset 1 536870916 true]
+        [5 :ui.slot/measure 0 536870916 true]
+        [6 :ui.slot/ring 3 536870916 true]
+        [6 :ui.slot/offset 2 536870916 true]
+        [6 :ui.slot/measure 0 536870916 true]]
+     [[7 :action/measure 0 536870915 true]
+      [7 :action/offset 0 536870915 true]
+      [7 :action/seq 2 536870915 true]
+      [7 :action/value "A3" 536870915 true]]
+     [[8 :param/parent 2 536870916 true]
+      [8 :param/type :double 536870916 true]
+      [8 :param/value 9 536870916 true]
+      [8 :param/name "param" 536870916 true]
+      [9 :param.value/double 3.4 536870916 true]]
+     [[10 :param/parent 7 536870917 true]
+      [10 :param/type :double 536870917 true]
+      [10 :param/value 11 536870917 true]
+      [10 :param/name "param" 536870917 true]
+      [11 :param.value/double 2.4 536870917 true]]])
+  (let [caudex-impl (c.impl/reify-circuit circuit)
         inline-impl (impl-inline/reify-circuit wizard.circuit.debug/circuit)
         ;; caudex-impl (c.impl/reify-circuit (:circuit tes))
         ;; inline-impl (:circuit-fn tes)
         ;; c-state (state/atom-state (:circuit tes))
         ;; c-state (r.state/rocksdb-state "/tmp/rocksdb" circuit {:debug? true})
-        c-state (state/atom-state circuit)
-        ]
-    (compare-states circuit c-state caudex-impl inline-impl transactions)
+        c-state (state/atom-state circuit)]
+    (compare-states circuit c-state caudex-impl inline-impl tx-data)
     #_(compare-states (:circuit tes) c-state caudex-impl inline-impl transactions))
 
-  (dump-circuit)
+  (require '[datomic.api :as d])
+  (d/create-database "datomic:mem://hello")
+  (def conn (d/connect "datomic:mem://hello"))
+
+  @(d/transact
+    conn
+    [{:db/ident :action/value :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+     {:db/ident :action/measure :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+     {:db/ident :action/offset :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+     {:db/ident :action/seq :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+     {:db/ident :param/name :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+     {:db/ident :param/value :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+     {:db/ident :param/type :db/valueType :db.type/keyword :db/cardinality :db.cardinality/one} ;; :long | :double | :string
+     {:db/ident :param/parent :db/valueType :db.type/ref :db/cardinality :db.cardinality/one}
+     {:db/ident :param.value/string :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+     {:db/ident :param.value/long :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+     {:db/ident :param.value/double :db/valueType :db.type/double :db/cardinality :db.cardinality/one}
+     {:db/ident :seq/name :db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+     {:db/ident :seq/div :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+     {:db/ident :seq/len :db/valueType :db.type/tuple :db/tupleType :db.type/long :db/cardinality :db.cardinality/one}
+     {:db/ident :seq/active :db/valueType :db.type/boolean :db/cardinality :db.cardinality/one}])
+
+  (def conn (d/create-conn))
+  (doseq [t tx-data]
+    (d/transact conn (mapv #(into [:db/add] (take 3 %)) t)))
+
+  (d/q
+   '[:find ?a ?a-val ?m ?o ?p ?p-name ?p-type ?p-val-long ?p-val-string ?p-val-double
+     :in $ %
+     :where
+     [?a :action/measure ?m]
+     [?a :action/offset ?o]
+     [?a :action/value ?a-val]
+     [?a :action/seq ?seq]
+     [?seq :seq/active true]
+     (or-join [?seq ?a ?p ?p-type ?p-name ?p-val-long ?p-val-string ?p-val-double]
+              (and
+               [?p :param/parent ?seq]
+               [?p :param/name ?p-name]
+               (not-join [?a ?p-name]
+                         [?p' :param/name ?p-name]
+                         [?p' :param/parent ?a])
+               (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+              (and
+               [?p :param/parent ?a]
+               [?p :param/name ?p-name]
+               (param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double))
+              (and
+                 (not-join [?a ?seq]
+                           (or-join [?a ?seq]
+                                    [?p2 :param/parent ?a]
+                                    [?p2 :param/parent ?seq]))
+                 [(ground -1) ?p]
+                 [(ground "") ?p-name]
+                 [(ground :none) ?p-type]
+                 [(ground -1) ?p-val-long]
+                 [(ground "") ?p-val-string]
+                 [(ground 0.0) ?p-val-double]))]
+   (d/db conn)
+   '[[(param-val ?p ?p-type ?p-val-long ?p-val-string ?p-val-double)
+      [?p :param/value ?pv]
+      [?p :param/type ?p-type]
+      (or-join [?p ?p-type ?pv ?p-val-long ?p-val-string ?p-val-double]
+               (and
+                [(= ?p-type :long)]
+                [?pv :param.value/long ?p-val-long]
+                [(ground "") ?p-val-string]
+                [(ground 0.0) ?p-val-double])
+               (and
+                [(= ?p-type :string)]
+                [?pv :param.value/string ?p-val-string]
+                [(ground 0) ?p-val-long]
+                [(ground 0.0) ?p-val-double])
+               (and
+                [(= ?p-type :double)]
+                [?pv :param.value/double ?p-val-double]
+                [(ground 0) ?p-val-long]
+                [(ground "") ?p-val-string]))]])
 
   (def op (some #(when (= 'input-17094 (dbsp/-get-id %)) %) (g/nodes circuit)))
 

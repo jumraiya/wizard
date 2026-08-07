@@ -146,7 +146,7 @@
 
 (defn lmdb-state
   [dir circuit & [opts]]
-  (let [last-op (last (c.utils/topsort-circuit circuit))
+   (let [last-op (last (c.utils/topsort-circuit circuit))
         dbs (into {}
                   (comp
                    (filter
@@ -165,6 +165,7 @@
     (->LMDBState dbs (assoc opts
                             :io-time (atom 0)
                             :output-op (dbsp/-get-id last-op)))))
+
 
 
 (comment
