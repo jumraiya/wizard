@@ -58,6 +58,8 @@
    'not {:clj 'clojure.core/not :cljs 'cljs.core/not}
    'and {:clj 'clojure.core/and :cljs 'cljs.core/and}
    'tuple {:clj 'clojure.core/vector :cljs 'cljs.core/vector}
+   'first {:clj 'clojure.core/first :cljs 'cljs.core/first}
+   'second {:clj 'clojure.core/second :cljs 'cljs.core/second}
    'untuple {:clj 'clojure.core/identity :cljs 'cljs.core/identity}
    're-find {:clj 'clojure.core/re-find :cljs 'cljs.core/re-find}
    're-matches {:clj 'clojure.core/re-matches :cljs 'cljs.core/re-matches}
@@ -104,10 +106,7 @@
                               (if flipped? [r l] [l r])))
                            (map #(vector (:idx (first %)) (:idx (second %)))))
                           conds)
-        key-len (->> int-op dbsp/-get-output-type dbsp/-to-vector count inc)
-        delta-row-sym (gensym)
-        join-row-sym (gensym)
-        op-id (dbsp/-get-id op)]
+        key-len (->> int-op dbsp/-get-output-type dbsp/-to-vector count inc)]
     `(fns/join ~state-var ~tx-var '~other-id '~integrated-id ~replace-map ~key-len (z/gen-op-zset ~op) ~flipped?)))
 
 
