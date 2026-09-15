@@ -189,4 +189,33 @@
                  [2 :attr-2 10 123 true] ;;matches
               ;; no match
                  [4 :attr 3 123 true]]
-            :output #{[1 2 true]}}]}])
+            :output #{[1 2 true]}}]}
+   ;; The not-join filters on ?x and ?y together. The self grounds split the or
+   ;; branch into one relation per var, which leaves the not-join with several
+   ;; input sources, and each source has to be subtracted from the join of them
+   ;; all rather than on its own. Entity 8 shares ?x with the match on entity 6
+   ;; but not ?y, so it belongs in the result
+   {:query '[:find ?g ?x ?y ?a
+             :where
+             [?g :attr-1 ?x]
+             [?g :attr-2 ?y]
+             (or-join [?g ?x ?y ?a]
+                      (and
+                       [?a :attr-3 ?x]
+                       [?a :attr-4 ?y])
+                      (and
+                       (not-join [?x ?y]
+                                 [?n :attr-3 ?x]
+                                 [?n :attr-4 ?y])
+                       [(ground ?x) ?x]
+                       [(ground ?y) ?y]
+                       [(ground :none) ?a]))]
+    :data [{:tx [[5 :attr-1 0 123 true]
+                 [5 :attr-2 1 123 true]
+                 [8 :attr-1 0 123 true]
+                 [8 :attr-2 0 123 true]
+                 [6 :attr-3 0 123 true]
+                 [6 :attr-4 1 123 true]]
+            :output #{[5 0 1 6 true]
+                      [8 0 0 :none true]}}]
+    :case "test-not-join-multiple-sources"}])

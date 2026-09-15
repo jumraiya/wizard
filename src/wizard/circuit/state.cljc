@@ -35,7 +35,7 @@
     "Saves the current state into storage")
 
   (get-view [this])
-
+  
   (get-last-processed-tx [this])
 
   (start-checkpoint! [this])
@@ -111,7 +111,7 @@
         base)))
 
 (defrecord AtomCircuitState
-           [^clojure.lang.Atom state]
+           [^clojure.lang.Atom state res-keys]
 
   CircuitState
 
@@ -168,7 +168,9 @@
 
   (get-view
     [_this]
-    (-> @state :view))
+    (cond->>
+     (:view @state)
+      res-keys (mapv #(zipmap res-keys %))))
 
   (get-last-processed-tx
     [_]
@@ -222,14 +224,23 @@
 
 
 (defn atom-state
-  [circuit]
-  (let [last-op (last (utils/topsort-circuit circuit))]
-    (->AtomCircuitState (atom {:output-op (dbsp/-get-id last-op)
-                               :view (zs/mk-view-zset last-op)
-                               ;(sset/sorted-set)
-                               }))))
+  ([circuit]
+   (atom-state circuit nil))
+  ([circuit keys]
+   (let [last-op (last (utils/topsort-circuit circuit))]
+     (->AtomCircuitState (atom {:output-op (dbsp/-get-id last-op)
+                                :view (zs/mk-view-zset last-op)
+                                        ;(sset/sorted-set)
+                                })
+                         keys))))
 (defmacro mk-atom-state
-  [circuit]
-  (let [last-op (last (utils/topsort-circuit circuit))]
-    `(->AtomCircuitState (atom {:output-op '~(dbsp/-get-id last-op)
-                                :view (zs/gen-op-zset ~last-op)}))))
+  ([circuit]
+   (let [last-op (last (utils/topsort-circuit circuit))]
+     `(->AtomCircuitState (atom {:output-op '~(dbsp/-get-id last-op)
+                                 :view (zs/gen-op-zset ~last-op)})
+                          nil)))
+  ([circuit view-keys]
+   (let [last-op (last (utils/topsort-circuit circuit))]
+     `(->AtomCircuitState (atom {:output-op '~(dbsp/-get-id last-op)
+                                 :view (zs/gen-op-zset ~last-op)})
+                          ~view-keys))))

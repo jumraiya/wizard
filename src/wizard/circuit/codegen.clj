@@ -106,7 +106,7 @@
     - force? is true
   Otherwise reads the existing EDN and returns it as-is (durable)."
   [edn-dir circuit-id circuit-conf & {:keys [force?]}]
-  (let [{:wizard.circuit/keys [query rules]} circuit-conf
+  (let [{:wizard.circuit/keys [query rules view-keys]} circuit-conf
         edn-p          (circuit-edn-path edn-dir circuit-id)
         qry-p          (circuit-query-path edn-dir circuit-id)
         edn-exists?    (path-exists? edn-p)
@@ -127,7 +127,7 @@
       (when rebuild?
         (spit (path->str edn-p) (pr-str (c.utils/circuit->edn circuit)))
         (spit (path->str qry-p) (pr-str curr-query)))
-      {:circuit circuit :rebuilt? rebuild?})))
+      {:circuit circuit :rebuilt? rebuild? :view-keys view-keys})))
 
 
 (defn- target
@@ -186,9 +186,9 @@
 
 
 (defn- expand-atom-state
-  [circuit]
+  [circuit view-keys]
   (walk/macroexpand-all
-   (list 'wizard.circuit.state/mk-atom-state circuit)))
+   (list 'wizard.circuit.state/mk-atom-state circuit view-keys)))
 
 
 (defn- emit-child-source
@@ -238,13 +238,13 @@
         {:keys [edn]} (ensure-dirs! (workspace-path workspace-dir))
         outputs       (into []
                             (for [[id circuit-conf] (sort circuits)]
-                              (let [{:keys [circuit rebuilt?]}
+                              (let [{:keys [circuit rebuilt? view-keys]}
                                     (ensure-circuit-edn! edn id circuit-conf :force? force?)
                                     out-file (child-file conf id)]
                                 (if (child-fresh? conf id rebuilt?)
                                   {:id id :file out-file :written? false}
                                   (let [fn-form    (expand-circuit circuit cljs?)
-                                        state-form (expand-atom-state circuit)
+                                        state-form (expand-atom-state circuit view-keys)
                                         child-ns   (child-ns-sym conf id)
                                         source     (emit-child-source child-ns fn-form state-form)]
                                     (io/make-parents out-file)
